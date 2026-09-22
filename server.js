@@ -7,7 +7,11 @@ const { Server } = require('socket.io');
 const app = express();
 const server = http.createServer(app);
 const io = new Server(server);
-app.use(express.static(path.join(__dirname, 'public')));
+app.use(express.static(path.join(__dirname, 'public'), {
+  etag:false,
+  maxAge:0,
+  setHeaders(res){ res.setHeader('Cache-Control','no-store'); }
+}));
 
 const PORT = Number(process.env.PORT || 3000);
 const SETUP_MS = 3 * 60 * 1000;
@@ -36,6 +40,7 @@ function tileLabel(t) { return TILE_LABELS[t]; }
 function cloneCounts(counts) { return counts.slice(); }
 function countsFromTiles(tiles) { const c = Array(34).fill(0); for (const t of tiles) c[t]++; return c; }
 function tilesFromCounts(counts) { const a=[]; counts.forEach((n,t)=>{ for(let i=0;i<n;i++) a.push(t); }); return a; }
+function sortTiles(tiles) { return [...tiles].sort((a,b)=>a-b); }
 function shuffle(a) { for (let i=a.length-1;i>0;i--) { const j=Math.floor(Math.random()*(i+1)); [a[i],a[j]]=[a[j],a[i]]; } return a; }
 function makeWall() { const a=[]; for(let t=0;t<34;t++) for(let i=0;i<4;i++) a.push(t); return shuffle(a); }
 function id() { return crypto.randomBytes(5).toString('hex'); }
@@ -140,9 +145,17 @@ function isValuePair(t, seat) {
 function groupsContainTerminalHonor(g) { return g.tiles.some(isTerminalOrHonor); }
 function groupsAllTerminalHonor(g) { return g.tiles.every(isTerminalOrHonor); }
 
-function detectYakuman(counts, decomps) {
+function isKokushi13Wait(counts, winTile) {
+  const yaos = [0,8,9,17,18,26,27,28,29,30,31,32,33];
+  // Before the winning tile, all 13 terminal/honor types must be present exactly once.
+  return yaos.every(t => counts[t] === (t === winTile ? 2 : 1)) &&
+    counts.every((n,t) => yaos.includes(t) ? n >= 1 : n === 0) &&
+    yaos.includes(winTile);
+}
+
+function detectYakuman(counts, decomps, winTile=null) {
   const y=[];
-  if (isKokushi(counts)) y.push({name:'国士無双', han:13});
+  if (isKokushi(counts)) y.push({name:'国士無双',han:(winTile!=null && isKokushi13Wait(counts,winTile))?26:13});
   const allHonors = counts.every((n,t)=>n===0||isHonor(t));
   const allTerminals = counts.every((n,t)=>n===0||isTerminal(t));
   const greenSet = new Set([19,20,22,23,25,32]);
@@ -165,24 +178,61 @@ function detectYakuman(counts, decomps) {
     const s=counts.slice(base,base+9);
     if (s.reduce((a,b)=>a+b,0)!==14) continue;
     const need=[3,1,1,1,1,1,1,1,3];
-    if (need.every((n,i)=>s[i]>=n)) y.push({name:'九蓮宝燈',han:13});
+    if (need.every((n,i)=>s[i]>=n)) {
+      const extra = s.map((n,i)=>n-need[i]);
+      const extraCount=extra.reduce((a,b)=>a+b,0);
+      const pure = winTile!=null && extraCount===1 && extra[winTile-base]===1 &&
+        counts.every((n,t)=>t>=base&&t<base+9 ? true : n===0);
+      y.push({name:'九蓮宝燈',han:pure?26:13});
+    }
   }
   return dedupeYakuman(y);
 }
-function dedupeYakuman(y) { const seen=new Set(); return y.filter(v=>{const key=v.name+v.requiresPairWait; if(seen.has(key)) return false; seen.add(key); return true;}); }
+function dedupeYakuman(y) {
+  const seen=new Set();
+  return y.filter(v=>{const key=`${v.name}:${v.han}`; if(seen.has(key)) return false; seen.add(key); return true;});
+}
+
+function waitTypeForGroup(g, winTile) {
+  if (!g.tiles.includes(winTile)) return null;
+  if (g.type==='pair') return 'tanki';
+  if (g.type==='triplet') return 'shanpon';
+  if (g.type==='sequence') {
+    const start=g.tiles[0];
+    if ((start%9===0 && winTile===start+2) || (start%9===6 && winTile===start)) return 'penchan';
+    if (winTile===start+1) return 'kanchan';
+    return 'ryanmen';
+  }
+  return null;
+}
 
 function calcFu(decomp, counts, winTile, seat, winByRon=true, pinfu=false, chiitoi=false) {
   if (chiitoi) return 25;
   if (pinfu && winByRon) return 30;
-  let fu=20;
-  for(const g of decomp) {
-    if (g.type==='triplet') fu += isTerminalOrHonor(g.tiles[0]) ? 8 : 4;
-    if (g.type==='pair' && isValuePair(g.tiles[0], seat)) fu += 2;
+
+  // Enumerate every legal group that can contain the winning tile and take the
+  // highest-fu interpretation. All hands are closed in this game; only a
+  // triplet completed by ron is treated as open for fu purposes.
+  const assignments=[];
+  decomp.forEach((g,i)=>{ if(g.tiles.includes(winTile)) assignments.push(i); });
+  if(!assignments.length) assignments.push(-1);
+  let best=0;
+  for(const winGroupIndex of assignments) {
+    let fu=20 + (winByRon ? 10 : 0);
+    decomp.forEach((g,i)=>{
+      if(g.type==='pair' && isValuePair(g.tiles[0],seat)) fu+=2;
+      if(g.type==='triplet') {
+        const terminalHonor=isTerminalOrHonor(g.tiles[0]);
+        const openedByRon=winByRon && i===winGroupIndex;
+        fu += openedByRon ? (terminalHonor?4:2) : (terminalHonor?8:4);
+      }
+    });
+    const wt=winGroupIndex>=0 ? waitTypeForGroup(decomp[winGroupIndex],winTile) : null;
+    if(wt==='tanki'||wt==='kanchan'||wt==='penchan') fu+=2;
+    fu=Math.ceil(fu/10)*10;
+    if(fu>best) best=fu;
   }
-  const waits=findWinContext(decomp,winTile,winByRon);
-  if (waits.some(w=>w==='tanki'||w==='kanchan'||w==='penchan')) fu+=2;
-  if (winByRon) fu=Math.max(fu,30);
-  return Math.ceil(fu/10)*10;
+  return Math.max(best,30);
 }
 
 function calcYakuForDecomp(decomp, counts, winTile, seat, context) {
@@ -201,8 +251,13 @@ function calcYakuForDecomp(decomp, counts, winTile, seat, context) {
   if (pinfu) y.push(['平和',1]);
 
   const seqKeys=allSeq.map(g=>g.tiles.join(','));
-  const iipei = seqKeys.some((v,i)=>seqKeys.indexOf(v)!==i);
-  if (iipei) y.push(['一盃口',1]);
+  const seqFreq=new Map();
+  for(const k of seqKeys) seqFreq.set(k,(seqFreq.get(k)||0)+1);
+  const pairSeqCount=[...seqFreq.values()].filter(n=>n>=2).length;
+  const ryanpeko = allSeq.length===4 && pairSeqCount===2;
+  const iipei = !ryanpeko && pairSeqCount>=1;
+  if (ryanpeko) y.push(['二盃口',3]);
+  else if (iipei) y.push(['一盃口',1]);
 
   const suitsPresent = new Set();
   let honor=false;
@@ -214,8 +269,8 @@ function calcYakuForDecomp(decomp, counts, winTile, seat, context) {
   const allGroupsTerminalHonor = decomp.every(g=>groupsContainTerminalHonor(g));
   const allGroupsTerminal = decomp.every(g=>g.tiles.every(isTerminal));
   const hasSeq=allSeq.length>0;
-  if (allGroupsTerminalHonor && hasSeq) y.push(['混全帯么九',2]);
   if (allGroupsTerminal && hasSeq && !honor) y.push(['純全帯么九',3]);
+  else if (allGroupsTerminalHonor && hasSeq) y.push(['混全帯么九',2]);
   if (!hasSeq && counts.every((n,t)=>n===0||isTerminalOrHonor(t))) y.push(['混老頭',2]);
   if (!hasSeq) y.push(['対々和',2]);
 
@@ -244,33 +299,27 @@ function calcYakuForDecomp(decomp, counts, winTile, seat, context) {
   const dragonPairs=[31,32,33].filter(t=>counts[t]>=2).length;
   if(dragonTriplets===2 && dragonPairs===3) y.push(['小三元',2]);
 
-  // Sanankou. A ron-completed triplet is not concealed for this purpose.
-  let concealedTrip=0;
-  for(const g of triplets) if(!(context.winByRon && g.tiles[0]===winTile)) concealedTrip++;
+  // Sanankou. If the ron tile can legally belong to another group, choose that
+  // interpretation; only a triplet that must be completed by ron becomes open.
+  const winCanBeOutsideTriplet=decomp.some(g=>g.type!=='triplet' && g.tiles.includes(winTile));
+  let concealedTrip=triplets.length;
+  if(context.winByRon && !winCanBeOutsideTriplet && triplets.some(g=>g.tiles[0]===winTile)) concealedTrip--;
   if(concealedTrip>=3)y.push(['三暗刻',2]);
 
-  // Chiitoitsu
-  const chiitoi=isChiitoitsu(counts);
-  if(chiitoi)y.push(['七対子',2]);
-
-  return { yaku:y, pinfu, chiitoi };
+  return { yaku:y, pinfu, chiitoi:false };
 }
 
 function scoreHand(tiles14, winTile, seat, context) {
   const counts=countsFromTiles(tiles14);
-  const yakuman=detectYakuman(counts, standardDecompositions(counts));
+  let yakuman=detectYakuman(counts, standardDecompositions(counts), winTile);
   if (yakuman.length) {
-    let yCount=0;
-    for(const y of yakuman) yCount += y.han/13;
-    // Suuankou by ron is only valid on tanki.
+    // Suuankou by ron is valid only when the winning tile completes the pair (tanki).
     if (yakuman.some(y=>y.name==='四暗刻'&&y.requiresPairWait)) {
       const ds=standardDecompositions(counts);
       const tanki=ds.some(d=>findWinContext(d,winTile,true).includes('tanki'));
-      if(!tanki) {
-        // remove double-counted suuankou entries; other yakuman remain
-        yCount -= yakuman.filter(y=>y.name==='四暗刻').reduce((a,b)=>a+b.han/13,0);
-      }
+      if(!tanki) yakuman=yakuman.filter(y=>y.name!=='四暗刻');
     }
+    const yCount=yakuman.reduce((sum,y)=>sum+y.han/13,0);
     if(yCount>0) return {yakumanCount:yCount, han:yCount*13, fu:0, yaku:yakuman.map(y=>[y.name,y.han])};
   }
   const ds=standardDecompositions(counts);
@@ -289,6 +338,7 @@ function scoreHand(tiles14, winTile, seat, context) {
     if(suits.size===1 && hon)y.push(['混一色',3]);
     if(suits.size===1 && !hon)y.push(['清一色',6]);
     if(counts.every((n,t)=>n===0||isSimple(t)))y.push(['断么九',1]);
+    if(counts.every((n,t)=>n===0||isTerminalOrHonor(t)))y.push(['混老頭',2]);
     const han=y.reduce((s,v)=>s+v[1],0);
     if(!best || han*1000+25 > best.han*1000+best.fu) best={han,fu:25,yaku:y,chiitoi:true,pinfu:false,decomp:null};
   }
@@ -299,7 +349,7 @@ function scoreHand(tiles14, winTile, seat, context) {
 
 function classifyScore(han, fu, yakumanCount) {
   if (yakumanCount && yakumanCount >= 1) return {label: yakumanCount===1?'役満':`${yakumanCount}倍役満`, payout: 4*yakumanCount};
-  if (han >= 13) return {label:'数え役満', payout:4*Math.floor(han/13)};
+  if (han >= 13) return {label:'数え役満', payout:4};
   if (han >= 11) return {label:'三倍満', payout:3};
   if (han >= 8) return {label:'倍満', payout:2};
   if (han >= 6) return {label:'跳満', payout:1.5};
@@ -325,7 +375,7 @@ function evaluateRon(room, winnerSeat, winTile, discarderSeat) {
   const context={
     riichi:true,
     ippatsu:p.ippatsu,
-    houtei: discarderSeat==='WEST' && room.players[discarderSeat]?.discardCount===17,
+    houtei: discarderSeat==='WEST' && room.players.WEST?.discardCount===17,
     winByRon:true
   };
   const tiles=p.hand13.concat([winTile]);
@@ -377,16 +427,16 @@ function publicRoom(room, forSocketId) {
     result:room.result,
     me: me ? {
       id:me.id, nickname:me.nickname, seat:me.seat,
-      private34Tiles:me.private34Tiles,
-      hand13:me.hand13,
-      discardCandidates:me.discardCandidates,
+      private34Tiles:sortTiles(me.private34Tiles),
+      hand13:sortTiles(me.hand13),
+      discardCandidates:sortTiles(me.discardCandidates),
       discardedTiles:me.discardedTiles.slice(),
       discardCount:me.discardCount,
       setupConfirmed:me.setupConfirmed,
       isTenpai:me.isTenpai,
       isRiichi:me.isRiichi,
       ippatsu:me.ippatsu,
-      waits:me.waits,
+      waits:me.waits.slice(),
       furiten:me.furiten,
       temporaryFuriten:me.temporaryFuriten,
       setupTimedOut:me.setupTimedOut
@@ -432,6 +482,7 @@ function initialPlayer(id, nickname, seat) {
 }
 
 function startRound(room) {
+  room.dealer='EAST';
   const wall=makeWall();
   room.phase='DORA_SELECT';
   room.witnessWall=wall.slice();
@@ -472,26 +523,23 @@ function finishDoraSelection(room,index) {
 function lockSetup(room, seat, hand13, forced=false) {
   const p=room.players[seat];
   if(room.phase!=='SETUP' || p.setupConfirmed) return;
+  const timedOut = p.setupTimedOut || (room.setupEndsAt && Date.now() > room.setupEndsAt);
   const counts=countsFromTiles(p.private34Tiles);
   const selected=[]; const used=new Set();
   for(const t of Array.isArray(hand13)?hand13:[]) {
     if(t>=0&&t<34&&!used.has(t) && selected.filter(x=>x===t).length<counts[t]) { selected.push(t); used.add(`${t}:${selected.filter(x=>x===t).length}`); }
   }
-  // The browser sends the exact 13 tile list. Preserve it; fill if timed out.
-  const haveCounts=countsFromTiles(selected);
-  if(selected.length<13 && forced) {
-    for(let t=0;t<34&&selected.length<13;t++) while(haveCounts[t]<counts[t]&&selected.length<13) { selected.push(t); haveCounts[t]++; }
-  }
-  if(selected.length!==13 && !forced) return;
+  // Even after the 3-minute limit, the player still has to choose exactly 13 tiles.
+  if(selected.length!==13) return;
   p.hand13=selected;
   const restCounts=countsFromTiles(p.private34Tiles);
   for(const t of selected) restCounts[t]--;
   p.discardCandidates=tilesFromCounts(restCounts);
   const val=validatePlayerSetup(p);
-  p.isTenpai=val.tenpai;
-  p.waits=val.waits;
+  p.isTenpai=timedOut ? false : val.tenpai;
+  p.waits=timedOut ? [] : val.waits;
   p.setupConfirmed=true;
-  p.setupTimedOut=forced;
+  p.setupTimedOut=!!timedOut;
   // Every player makes a first-turn riichi declaration; noten is allowed and recorded.
   p.isRiichi=true;
   p.ippatsu=true;
@@ -502,7 +550,7 @@ function lockSetup(room, seat, hand13, forced=false) {
 
 function beginPlay(room) {
   room.phase='PLAYING';
-  room.turn=room.dealer;
+  room.turn='EAST';
   room.players.EAST.temporaryFuriten=false;
   room.players.WEST.temporaryFuriten=false;
   emitRoom(room);
@@ -524,22 +572,14 @@ function discard(room, seat, tile) {
   room.lastDiscard=tile;
   room.lastDiscardBy=seat;
   room.turn=otherSeat(seat);
-
-  // Resolve all state changes before broadcasting. The opponent must receive
-  // the new discardedTiles array, lastDiscard, lastDiscardBy and turn in the
-  // same state packet; otherwise the two clients can temporarily disagree.
   p.temporaryFuriten=false;
+  // Ippatsu ends when that player makes their first discard.
+  p.ippatsu=false;
   updateFuriten(p);
-  prepareTurnState(room);
-  return {ok:true};
-}
-
-function prepareTurnState(room) {
-  const p=room.players[room.turn];
-  if(!p)return;
-  if(p.discardCount>0) p.ippatsu=false;
-  p.temporaryFuriten=false;
+  // Broadcast only after every discard-related field is finalized so both clients
+  // receive the same discardedTiles / lastDiscard / lastDiscardBy / turn snapshot.
   emitRoom(room);
+  return {ok:true};
 }
 
 function doRon(room, winnerSeat) {
@@ -571,7 +611,6 @@ function doDraw(room) {
     room.phase='DRAW';
     room.stake*=2;
     room.result={type:'DRAW',message:'17장씩 타패했지만 화료가 없어 유국',nextStake:room.stake};
-    room.dealer=otherSeat(room.dealer);
     emitRoom(room);
   }
 }
@@ -598,7 +637,7 @@ io.on('connection', socket=>{
 
   socket.on('select_dora',({index})=>{
     const room=rooms.get(socket.data.roomCode); if(!room)return;
-    if(playerSeat(room,socket.id)!=='EAST')return socket.emit('error_message','선만 도라표시패를 선택할 수 있습니다.');
+    if(playerSeat(room,socket.id)!=='EAST')return socket.emit('error_message','현재 선만 도라표시패를 선택할 수 있습니다.');
     finishDoraSelection(room,index);
   });
 
@@ -606,7 +645,7 @@ io.on('connection', socket=>{
     const room=rooms.get(socket.data.roomCode); if(!room)return;
     const seat=playerSeat(room,socket.id); if(!seat)return;
     if(room.phase!=='SETUP')return;
-    if(Date.now()>room.setupEndsAt) return lockSetup(room,seat,tiles,true);
+    if(room.setupEndsAt && Date.now()>room.setupEndsAt) room.players[seat].setupTimedOut=true;
     lockSetup(room,seat,tiles,false);
   });
 
@@ -638,6 +677,14 @@ io.on('connection', socket=>{
     const room=rooms.get(socket.data.roomCode); if(!room)return;
     if(room.phase!=='RESULT' && room.phase!=='DRAW')return;
     room.roundNumber++;
+    // Seats/roles swap every game: the previous WEST becomes EAST (dealer) and vice versa.
+    const oldEast=room.players.EAST;
+    const oldWest=room.players.WEST;
+    room.players.EAST=oldWest;
+    room.players.WEST=oldEast;
+    if(room.players.EAST) room.players.EAST.seat='EAST';
+    if(room.players.WEST) room.players.WEST.seat='WEST';
+    room.dealer='EAST';
     startRound(room);
   });
 
@@ -655,10 +702,12 @@ setInterval(()=>{
   const now=Date.now();
   for(const room of rooms.values()){
     if(room.phase==='SETUP' && room.setupEndsAt && now>=room.setupEndsAt){
+      let changed=false;
       for(const seat of ['EAST','WEST']){
         const p=room.players[seat];
-        if(p && !p.setupConfirmed) lockSetup(room,seat,p.hand13,true);
+        if(p && !p.setupConfirmed && !p.setupTimedOut){ p.setupTimedOut=true; changed=true; }
       }
+      if(changed) emitRoom(room);
     }
     if(room.phase==='PLAYING' && room.players.EAST?.discardCount>=DRAW_LIMIT && room.players.WEST?.discardCount>=DRAW_LIMIT) doDraw(room);
   }
