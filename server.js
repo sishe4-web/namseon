@@ -427,6 +427,12 @@ function validatePlayerSetup(player) {
   return {valid:waits.length>0,tenpai:waits.length>0,waits};
 }
 
+function waitRemaining(room, player, tile) {
+  const own = (player.hand13 || []).filter(t=>t===tile).length;
+  const dora = room.doraIndicator===tile ? 1 : 0;
+  return Math.max(0, 4 - own - dora);
+}
+
 function publicRoom(room, forSocketId) {
   const seat=playerSeat(room,forSocketId);
   const me=seat?room.players[seat]:null;
@@ -445,6 +451,8 @@ function publicRoom(room, forSocketId) {
     lastDiscardBy:room.lastDiscardBy,
     winner:room.winner,
     result:room.result,
+    nextReady:room.nextReady || {EAST:false,WEST:false},
+    nextReadyCount:Object.values(room.nextReady || {}).filter(Boolean).length,
     me: me ? {
       id:me.id, nickname:me.nickname, seat:me.seat,
       private34Tiles:sortTiles(me.private34Tiles),
@@ -457,9 +465,11 @@ function publicRoom(room, forSocketId) {
       isRiichi:me.isRiichi,
       ippatsu:me.ippatsu,
       waits:me.waits.slice(),
+      waitRemaining:Object.fromEntries((me.waits||[]).map(t=>[t,waitRemaining(room,me,t)])),
       waitPreview:buildWaitPreview(room,seat,me.hand13),
       riichiDiscardIndex:me.riichiDiscardIndex,
       money:me.money,
+      nextReady:!!(room.nextReady?.[seat]),
       furiten:me.furiten,
       temporaryFuriten:me.temporaryFuriten,
       setupTimedOut:me.setupTimedOut
@@ -470,6 +480,7 @@ function publicRoom(room, forSocketId) {
       discardCount:opp.discardCount,
       riichiDiscardIndex:opp.riichiDiscardIndex,
       money:opp.money,
+      nextReady:!!(room.nextReady?.[otherSeat(seat)]),
       setupConfirmed:opp.setupConfirmed,
       isTenpai:opp.isTenpai,
       isRiichi:opp.isRiichi,
@@ -525,7 +536,8 @@ function startRound(room) {
   room.doraSelectionIndex=null;
   room.doraIndicator=null;
   room.uraDoraIndicator=null;
-  room.lastDiscard=null; room.lastDiscardBy=null; room.turn=null; room.winner=null; room.result=null;
+  room.lastDiscard=null; room.lastDiscardBy=null; room.turn=null; room.winner=null; room.result=null; room.resultEndsAt=null;
+  room.nextReady={EAST:false,WEST:false};
   room.players.EAST.hand13=[]; room.players.WEST.hand13=[];
   room.players.EAST.discardCandidates=[]; room.players.WEST.discardCandidates=[];
   room.players.EAST.discardedTiles=[]; room.players.WEST.discardedTiles=[];
@@ -638,14 +650,16 @@ function doRon(room, winnerSeat) {
   room.phase='RESULT'; room.winner=winnerSeat; room.resultEndsAt=Date.now()+10000;
   const payment=room.stake*evaluated.classification.payout;
   room.players[winnerSeat].money += payment;
-  room.players[discarder].money -= payment;
+  room.players[discarder].money = Math.max(0, room.players[discarder].money - payment);
+  const gameOver = room.players[discarder].money <= 0;
   room.result={
     type:'RON',winner:winnerSeat,loser:discarder,tile,han:evaluated.han,fu:evaluated.fu,
     yaku:evaluated.yaku,classification:evaluated.classification.label,payment,
     baseHan:evaluated.baseHan,dora:evaluated.dora,ura:evaluated.ura,
     resultEndsAt:room.resultEndsAt,
     winnerHand:resultHandView(p, tile),
-    loserHand:resultHandView(room.players[discarder], null)
+    loserHand:resultHandView(room.players[discarder], null),
+    gameOver, finalWinner:gameOver ? winnerSeat : null, finalLoser:gameOver ? discarder : null
   };
   p.ippatsu=false; room.players[discarder].ippatsu=false;
   emitRoom(room);
@@ -658,11 +672,15 @@ function doDraw(room) {
     room.phase='DRAW';
     room.resultEndsAt=Date.now()+10000;
     const drawStake=room.stake;
-    room.players.EAST.money -= drawStake;
-    room.players.WEST.money -= drawStake;
+    room.players.EAST.money = Math.max(0, room.players.EAST.money - drawStake);
+    room.players.WEST.money = Math.max(0, room.players.WEST.money - drawStake);
     room.stake*=2;
+    const eastBroke = room.players.EAST.money <= 0;
+    const westBroke = room.players.WEST.money <= 0;
     room.result={type:'DRAW',message:'17장씩 타패했지만 화료가 없어 유국',nextStake:room.stake,resultEndsAt:room.resultEndsAt,
-      east:resultHandView(room.players.EAST), west:resultHandView(room.players.WEST)};
+      east:resultHandView(room.players.EAST), west:resultHandView(room.players.WEST),
+      gameOver:eastBroke||westBroke, finalWinner:eastBroke&&westBroke?null:(eastBroke?'WEST':westBroke?'EAST':null),
+      finalLoser:eastBroke&&westBroke?null:(eastBroke?'EAST':westBroke?'WEST':null)};
     emitRoom(room);
   }
 }
@@ -738,19 +756,24 @@ io.on('connection', socket=>{
   socket.on('next_round',()=>{
     const room=rooms.get(socket.data.roomCode); if(!room)return;
     if(room.phase!=='RESULT' && room.phase!=='DRAW')return;
-    if(room.resultEndsAt && Date.now()<room.resultEndsAt) {
-      return socket.emit('error_message',`결과를 확인하세요. ${Math.ceil((room.resultEndsAt-Date.now())/1000)}초 후 다음 판을 시작할 수 있습니다.`);
+    if(room.result?.gameOver) return socket.emit('error_message','이번 대국이 종료되었습니다.');
+    const seat=playerSeat(room,socket.id); if(!seat)return;
+    room.nextReady=room.nextReady||{EAST:false,WEST:false};
+    room.nextReady[seat]=true;
+    const timeUp=!room.resultEndsAt || Date.now()>=room.resultEndsAt;
+    if(room.nextReady.EAST && room.nextReady.WEST || timeUp){
+      room.roundNumber++;
+      const oldEast=room.players.EAST;
+      const oldWest=room.players.WEST;
+      room.players.EAST=oldWest;
+      room.players.WEST=oldEast;
+      if(room.players.EAST) room.players.EAST.seat='EAST';
+      if(room.players.WEST) room.players.WEST.seat='WEST';
+      room.dealer='EAST';
+      startRound(room);
+    } else {
+      emitRoom(room);
     }
-    room.roundNumber++;
-    // Seats/roles swap every game: the previous WEST becomes EAST (dealer) and vice versa.
-    const oldEast=room.players.EAST;
-    const oldWest=room.players.WEST;
-    room.players.EAST=oldWest;
-    room.players.WEST=oldEast;
-    if(room.players.EAST) room.players.EAST.seat='EAST';
-    if(room.players.WEST) room.players.WEST.seat='WEST';
-    room.dealer='EAST';
-    startRound(room);
   });
 
   socket.on('disconnect',()=>{
@@ -773,6 +796,13 @@ setInterval(()=>{
         if(p && !p.setupConfirmed && !p.setupTimedOut){ p.setupTimedOut=true; changed=true; }
       }
       if(changed) emitRoom(room);
+    }
+    if((room.phase==='RESULT'||room.phase==='DRAW') && room.result?.gameOver!==true && room.resultEndsAt && now>=room.resultEndsAt){
+      const oldEast=room.players.EAST; const oldWest=room.players.WEST;
+      room.roundNumber++; room.players.EAST=oldWest; room.players.WEST=oldEast;
+      if(room.players.EAST) room.players.EAST.seat='EAST'; if(room.players.WEST) room.players.WEST.seat='WEST';
+      room.dealer='EAST'; startRound(room);
+      continue;
     }
     if(room.phase==='PLAYING' && room.players.EAST?.discardCount>=DRAW_LIMIT && room.players.WEST?.discardCount>=DRAW_LIMIT) doDraw(room);
   }

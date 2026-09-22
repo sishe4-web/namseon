@@ -33,3 +33,21 @@ html,body{max-width:100%;overflow-x:hidden}
 .result-wait-tile{width:24px;height:31px;display:inline-flex}
 .result-wait-tile img{width:100%;height:100%;object-fit:contain}
 @media(max-width:1000px){.table{grid-template-columns:minmax(0,1fr);}.result-hand-tile{width:31px;height:40px}.result-hand-row{gap:2px}}
+
+/* Tenpai wait-count display */
+.waits{display:flex;align-items:center;gap:10px;flex-wrap:wrap;min-height:42px}
+.waits-heading{font-size:11px;color:#aebbb7;font-weight:800;white-space:nowrap}
+.wait-count-row{display:flex;align-items:flex-end;gap:8px;flex-wrap:wrap}
+.wait-count-tile{position:relative;display:inline-flex;align-items:flex-end;width:31px;height:43px;flex:0 0 auto}
+.wait-count-img{display:block;width:27px;height:36px}
+.wait-count-img img{display:block;width:100%;height:100%;object-fit:contain}
+.wait-count-tile>b{position:absolute;right:-8px;bottom:-5px;min-width:19px;height:17px;padding:0 3px;border-radius:9px;display:flex;align-items:center;justify-content:center;background:rgba(9,13,15,.96);border:1px solid rgba(215,173,86,.55);color:#f7e7b4;font-size:9px;line-height:1;box-shadow:0 3px 8px rgba(0,0,0,.35)}
+.game-waits .wait-count-tile{width:30px;height:40px;margin-right:3px}
+.game-waits .wait-count-img{width:27px;height:36px}
+.game-waits .wait-count-tile>b{font-size:8px;min-width:17px;height:15px;right:-7px;bottom:-4px}
+.next-round-status{margin:8px auto 0;color:#c8d0cd;font-size:12px;text-align:center;min-height:18px}
+.final-result-rank{animation:finalPulse 1.35s ease-in-out infinite!important}
+.final-burst{animation:finalBurst .75s ease-out both}
+.final-money-line{margin-top:14px;padding:12px 14px;border-radius:12px;border:1px solid rgba(215,173,86,.38);background:rgba(215,173,86,.07);font-weight:800;color:#f1d998}
+@keyframes finalPulse{0%,100%{transform:scale(1);filter:brightness(1)}50%{transform:scale(1.035);filter:brightness(1.18)}}
+@keyframes finalBurst{0%{transform:scale(.7);opacity:0}70%{transform:scale(1.08);opacity:1}100%{transform:scale(1);opacity:1}}
