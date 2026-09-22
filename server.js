@@ -399,6 +399,23 @@ function evaluateRon(room, winnerSeat, winTile, discarderSeat) {
   return {allowed:true,baseHan:base.han,han:finalHan,fu:base.fu,yaku,classification:finalClass,dora,ura};
 }
 
+function buildWaitPreview(room, seat, hand13) {
+  const counts=countsFromTiles(hand13||[]);
+  if(!Array.isArray(hand13) || hand13.length!==13 || counts.some(n=>n>4)) return [];
+  const waits=getWaits(hand13);
+  return waits.map(t=>{
+    const tiles=hand13.concat([t]);
+    const base=scoreBeforeUra(tiles,t,seat,{riichi:true,ippatsu:false,houtei:false,winByRon:true});
+    if(!base) return {tile:t,han:0,fu:0,yaku:[],classification:'역 없음',allowed:false};
+    const dora=countDora(tiles,room.doraIndicator);
+    const han=base.yakumanCount ? base.han : base.han+dora;
+    const yaku=[...base.yaku];
+    if(dora && !base.yakumanCount) yaku.push(['ドラ',dora]);
+    const classification=classifyScore(han,base.fu,base.yakumanCount);
+    return {tile:t,han,fu:base.fu,yaku,classification:classification.label,allowed:classification.payout>0};
+  });
+}
+
 function validatePlayerSetup(player) {
   const unique = new Set(player.hand13);
   if(player.hand13.length!==13)return {valid:false,tenpai:false,waits:[]};
@@ -438,6 +455,9 @@ function publicRoom(room, forSocketId) {
       isRiichi:me.isRiichi,
       ippatsu:me.ippatsu,
       waits:me.waits.slice(),
+      waitPreview:buildWaitPreview(room,seat,me.hand13),
+      riichiDiscardIndex:me.riichiDiscardIndex,
+      money:me.money,
       furiten:me.furiten,
       temporaryFuriten:me.temporaryFuriten,
       setupTimedOut:me.setupTimedOut
@@ -446,6 +466,8 @@ function publicRoom(room, forSocketId) {
       id:opp.id, nickname:opp.nickname, seat:opp.seat,
       discardedTiles:opp.discardedTiles.slice(),
       discardCount:opp.discardCount,
+      riichiDiscardIndex:opp.riichiDiscardIndex,
+      money:opp.money,
       setupConfirmed:opp.setupConfirmed,
       isTenpai:opp.isTenpai,
       isRiichi:opp.isRiichi,
@@ -468,7 +490,7 @@ function emitRoom(room) {
       const permanent = p.furiten;
       const evalResult = wait && !permanent && !p.temporaryFuriten ? evaluateRon(room,seat,room.lastDiscard,oppSeat):{allowed:false,reason:permanent?'후리텐':'일시 후리텐'};
       payload.canRon=!!evalResult.allowed;
-      payload.ronReason=evalResult.reason||null;
+      payload.ronReason=evalResult.reason ? (evalResult.allowed ? evalResult.reason : (evalResult.reason==='만관 조건 미달' ? `${evalResult.reason} · 패스하면 일시 후리텐` : evalResult.reason)) : null;
       payload.ronInfo=evalResult.allowed?evalResult:null;
     }
     io.to(s).emit('state',payload);
@@ -478,7 +500,7 @@ function emitRoom(room) {
 function initialPlayer(id, nickname, seat) {
   return {
     id,nickname,seat,private34Tiles:[],hand13:[],discardCandidates:[],discardedTiles:[],
-    setupConfirmed:false,isTenpai:false,isRiichi:false,ippatsu:false,discardCount:0,waits:[],furiten:false,temporaryFuriten:false,setupTimedOut:false
+    setupConfirmed:false,isTenpai:false,isRiichi:false,ippatsu:false,discardCount:0,riichiDiscardIndex:null,waits:[],furiten:false,money:0,temporaryFuriten:false,setupTimedOut:false
   };
 }
 
@@ -498,6 +520,7 @@ function startRound(room) {
   room.players.EAST.discardCandidates=[]; room.players.WEST.discardCandidates=[];
   room.players.EAST.discardedTiles=[]; room.players.WEST.discardedTiles=[];
   room.players.EAST.discardCount=0; room.players.WEST.discardCount=0;
+  room.players.EAST.riichiDiscardIndex=null; room.players.WEST.riichiDiscardIndex=null;
   room.players.EAST.setupConfirmed=false; room.players.WEST.setupConfirmed=false;
   room.players.EAST.isRiichi=false; room.players.WEST.isRiichi=false;
   room.players.EAST.ippatsu=false; room.players.WEST.ippatsu=false;
@@ -569,6 +592,7 @@ function discard(room, seat, tile) {
   if(idx<0)return {ok:false,reason:'유효하지 않은 타패입니다.'};
   p.discardCandidates.splice(idx,1);
   p.discardedTiles.push(tile);
+  if (p.discardCount===0 && p.isRiichi) p.riichiDiscardIndex=0;
   p.discardCount++;
   room.lastDiscard=tile;
   room.lastDiscardBy=seat;
@@ -596,6 +620,8 @@ function doRon(room, winnerSeat) {
   if(!evaluated.allowed)return {ok:false,reason:evaluated.reason};
   room.phase='RESULT'; room.winner=winnerSeat;
   const payment=room.stake*evaluated.classification.payout;
+  room.players[winnerSeat].money += payment;
+  room.players[discarder].money -= payment;
   room.result={
     type:'RON',winner:winnerSeat,loser:discarder,tile,han:evaluated.han,fu:evaluated.fu,
     yaku:evaluated.yaku,classification:evaluated.classification.label,payment,
@@ -610,6 +636,9 @@ function doDraw(room) {
   if(room.phase!=='PLAYING') return;
   if(room.players.EAST.discardCount>=DRAW_LIMIT && room.players.WEST.discardCount>=DRAW_LIMIT) {
     room.phase='DRAW';
+    const drawStake=room.stake;
+    room.players.EAST.money -= drawStake;
+    room.players.WEST.money -= drawStake;
     room.stake*=2;
     room.result={type:'DRAW',message:'17장씩 타패했지만 화료가 없어 유국',nextStake:room.stake};
     emitRoom(room);
@@ -619,7 +648,9 @@ function doDraw(room) {
 io.on('connection', socket=>{
   socket.on('create_room', ({nickname,stake})=>{
     const code=roomCode();
-    const room={code,stake:Number(stake)||1000000,players:{EAST:initialPlayer(socket.id,String(nickname||'Player 1').slice(0,20),'EAST'),WEST:null},dealer:'EAST',roundNumber:1,phase:'WAITING',setupEndsAt:null,turn:null,lastDiscard:null,lastDiscardBy:null,winner:null,result:null,doraIndicator:null,uraDoraIndicator:null,doraPool:[]};
+    const startingMoney=Math.max(Number(stake)||1000000,1000000)*10;
+    const room={code,stake:Number(stake)||1000000,startingMoney,players:{EAST:initialPlayer(socket.id,String(nickname||'Player 1').slice(0,20),'EAST'),WEST:null},dealer:'EAST',roundNumber:1,phase:'WAITING',setupEndsAt:null,turn:null,lastDiscard:null,lastDiscardBy:null,winner:null,result:null,doraIndicator:null,uraDoraIndicator:null,doraPool:[]};
+    room.players.EAST.money=startingMoney;
     rooms.set(code,room); socket.join(code); socket.data.roomCode=code;
     socket.emit('room_created',{code}); emitRoom(room);
   });
@@ -630,6 +661,7 @@ io.on('connection', socket=>{
     if(room.players.WEST && room.players.EAST?.id!==socket.id)return socket.emit('error_message','방이 가득 찼습니다.');
     if(room.players.EAST.id===socket.id)return;
     room.players.WEST=initialPlayer(socket.id,String(nickname||'Player 2').slice(0,20),'WEST');
+    room.players.WEST.money=room.startingMoney;
     socket.join(room.code); socket.data.roomCode=room.code;
     socket.emit('joined_room',{code:room.code});
     io.to(room.code).emit('notice','두 플레이어가 입장했습니다. 게임을 시작합니다.');
@@ -640,6 +672,13 @@ io.on('connection', socket=>{
     const room=rooms.get(socket.data.roomCode); if(!room)return;
     if(playerSeat(room,socket.id)!=='EAST')return socket.emit('error_message','현재 선만 도라표시패를 선택할 수 있습니다.');
     finishDoraSelection(room,index);
+  });
+
+  socket.on('preview_setup',({tiles})=>{
+    const room=rooms.get(socket.data.roomCode); if(!room)return;
+    const seat=playerSeat(room,socket.id); if(!seat || room.phase!=='SETUP')return;
+    const clean=Array.isArray(tiles)?tiles.map(Number).filter(t=>Number.isInteger(t)&&t>=0&&t<34):[];
+    socket.emit('setup_preview',{waits:buildWaitPreview(room,seat,clean)});
   });
 
   socket.on('confirm_hand',({tiles})=>{
