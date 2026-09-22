@@ -105,11 +105,8 @@ $('confirmHandBtn').onclick=()=>{
   if(localSelected.length!==13){toast(`현재 ${localSelected.length}장입니다. 정확히 13장을 선택하세요.`);return}
   if(state?.gameMode==='CHARACTER'){
     const ch=state.me?.character;
-    if(ch==='KAIJI'){
-      const waits=new Set(localCurrentWaits());
-      if(localKaijiTiles.length!==2){toast('카이지 특수능력의 론패 2장을 먼저 골라야 합니다.');return;}
-      if(localKaijiTiles.some(t=>waits.has(t))){toast('특수 론패와 일반 대기패가 겹칩니다. 다른 패를 선택하세요.');return;}
-    }
+    // Kaiji's special-ron setup is optional and must not block the 13-tile
+    // confirmation itself. The server sanitizes any invalid special tiles.
     if(ch==='AKAGI' && !['m','p','s'].includes(state.me?.akagiSuit)){toast('아카기의 절일문 수패(만수·통수·삭수)를 먼저 선택해야 합니다.');return;}
   }
   socket.emit('confirm_hand',{tiles:localSelected.map(x=>x.tile)});

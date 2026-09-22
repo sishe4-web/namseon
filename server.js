@@ -733,13 +733,14 @@ function lockSetup(room, seat, hand13, forced=false) {
   }
   // Even after the 3-minute limit, the player still has to choose exactly 13 tiles.
   if(selected.length!==13) return;
-  // ORIGINAL mode has no character ability gate.
-  // CHARACTER mode requires only the abilities that actually need player input.
+  // The 13-tile confirmation is independent from Kaiji's optional special-ron setup.
+  // If special tiles were selected, keep only valid ones (max 2, not ordinary waits).
+  // This prevents an invalid/partial ability selection from blocking the start of the hand.
   if(!forced && room.gameMode==='CHARACTER' && p.character==='KAIJI') {
-    const waits=getWaits(selected);
-    const special=[...new Set((p.specialRonTiles||[]).map(Number))].filter(t=>Number.isInteger(t)&&t>=0&&t<34);
-    if(special.length!==2) io.to(p.id).emit('error_message','카이지 특수능력의 론패 2장을 먼저 선택해야 합니다.'); return;
-    if(special.some(t=>waits.includes(t))) io.to(p.id).emit('error_message','카이지 특수 론패와 일반 대기패가 겹칩니다. 다른 패를 선택하세요.'); return;
+    const waits=new Set(getWaits(selected));
+    p.specialRonTiles=[...new Set((p.specialRonTiles||[]).map(Number))]
+      .filter(t=>Number.isInteger(t)&&t>=0&&t<34&&!waits.has(t))
+      .slice(0,2);
   }
   if(!forced && room.gameMode==='CHARACTER' && p.character==='AKAGI' && !['m','p','s'].includes(p.akagiSuit)) {
     io.to(p.id).emit('error_message','아카기의 절일문 수패(만수·통수·삭수)를 먼저 선택해야 합니다.'); return;
@@ -827,15 +828,8 @@ function discard(room, seat, tile) {
   // Ippatsu ends when that player makes their first discard.
   p.ippatsu=false;
   updateFuriten(p);
-  p.setupConfirmed=false;
-  p.hand13=[];
-  p.discardCandidates=[];
-  p.isTenpai=false;
-  p.waits=[];
-  p.isRiichi=false;
-  p.ippatsu=false;
-  p.setupTimedOut=false;
-  room.setupUnlock[seat]=true;
+  // Keep the confirmed 13-tile hand visible throughout the 17-discard play.
+  // Only the discard candidate pool is consumed by each discard.
   emitRoom(room);
   return {ok:true};
 }
@@ -996,9 +990,13 @@ io.on('connection', socket=>{
     const seat=playerSeat(room,socket.id); if(!seat || room.phase!=='SETUP')return;
     const p=room.players[seat]; if(p.character!=='KAIJI' || p.setupConfirmed)return;
     const clean=[...new Set((Array.isArray(tiles)?tiles:[]).map(Number).filter(t=>Number.isInteger(t)&&t>=0&&t<34))];
-    if(clean.length!==2)return socket.emit('error_message','카이지 특수 론패를 2장 선택해야 합니다.');
-    if(p.hand13?.length===13 && clean.some(t=>getWaits(p.hand13).includes(t)))return socket.emit('error_message','현재 대기패는 특수 론패로 선택할 수 없습니다.');
-    p.specialRonTiles=clean; emitRoom(room);
+    // Allow 0~2 while the user is toggling tiles. The old exact-2 validation
+    // made deselection impossible: [A,B] -> [B] and [B] -> [] were rejected.
+    const waits=new Set(p.hand13?.length===13 ? getWaits(p.hand13) : []);
+    const invalid=clean.filter(t=>waits.has(t));
+    if(invalid.length) return socket.emit('error_message','현재 대기패는 특수 론패로 선택할 수 없습니다.');
+    p.specialRonTiles=clean.slice(0,2);
+    emitRoom(room);
   });
 
   socket.on('set_akagi_suit',({suit})=>{
