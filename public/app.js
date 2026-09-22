@@ -131,7 +131,7 @@ function renderCharacterDraw(s){
   for(let i=0;i<9;i++){
     const b=document.createElement('button');
     b.className='character-draw-card-back'+(myChoice===i?' picked':'');
-    b.innerHTML=`<span>${i+1}</span><small>裏</small>`;
+    b.innerHTML=`<span>?</span><small>미공개</small>`;
     b.disabled=revealed||myChoice!=null;
     b.onclick=()=>socket.emit('select_character_draw',{index:i});
     grid.appendChild(b);
@@ -207,7 +207,7 @@ function renderAbilityPanel(s){
     }
   } else if(ch==='MURAOKA'){
     const rows=(s.me.murauokaReveal||[]).map(x=>waitTileMarkup(x.tile,x.count)).join('');
-    box.innerHTML=`<div class="ability-title">${s.me.characterName} · 패산 간파</div><p>상대 패산에서 무작위로 뽑힌 10장의 종류와 매수만 알 수 있습니다. 텐파이 여부는 알 수 없습니다.</p><div class="revealed-count">공개된 10장 <span>${rows||'표시 준비 중'}</span></div>`;
+    box.innerHTML=`<div class="ability-title">${s.me.characterName} · 패산 간파</div><p>상대 패산에서 무작위로 정해진 8종류의 패와 각 종류의 총 보유 매수를 알 수 있습니다. 텐파이 여부는 알 수 없습니다.</p><div class="revealed-count">공개된 10장 <span>${rows||'표시 준비 중'}</span></div>`;
   } else if(ch==='WASHIZU'){
     box.innerHTML=`<div class="ability-title">${s.me.characterName} · 위압감</div><p>상대는 자신의 <b>9번째 타패까지</b> 요구패(1·9·자패)를 버릴 수 없습니다.</p><div class="ability-ready">특수능력 자동 적용</div>`;
   } else if(ch==='AKAGI'){
@@ -216,7 +216,6 @@ function renderAbilityPanel(s){
     box.querySelectorAll('.suit-btn').forEach(btn=>btn.onclick=()=>socket.emit('set_akagi_suit',{suit:btn.dataset.suit}));
   }
   const chReady=ch==='MURAOKA'||ch==='WASHIZU'||!!s.me.abilityReady || (ch==='KAIJI'&&localKaijiTiles.length===2) || (ch==='AKAGI'&&!!s.me.akagiSuit);
-  $('confirmHandBtn').disabled=!!s.me.setupConfirmed || !chReady || localSelected.length!==13;
 }
 
 function startSetup(s){
@@ -250,8 +249,19 @@ function startSetup(s){
     container.appendChild(el);
   });
   renderSelected(); updateSetupTimer(s.setupEndsAt); renderAbilityPanel(s);
-  const confirm=$('confirmHandBtn'); const locked=!!s.me.setupConfirmed; const canUnlock=locked && !s.opponent?.setupConfirmed; confirm.textContent=locked?(canUnlock?'확정 취소하고 다시 선택':'확정 완료'): '13장 확정'; confirm.disabled=locked? !canUnlock : (localSelected.length!==13 || (s.me.character==='KAIJI'&&localKaijiTiles.length!==2) || (s.me.character==='AKAGI'&&!s.me.akagiSuit));
+  const confirm=$('confirmHandBtn'); const locked=!!s.me.setupConfirmed; const canUnlock=locked && !s.opponent?.setupConfirmed;
+  const ch=s.me.character;
+  const chReady=ch==='MURAOKA'||ch==='WASHIZU'||ch==null||(ch==='KAIJI'&&localKaijiTiles.length===2)||(ch==='AKAGI'&&!!s.me.akagiSuit);
+  confirm.textContent=locked?(canUnlock?'확정 취소하고 다시 선택':'확정 완료'): '13장 확정';
+  confirm.disabled=locked ? !canUnlock : (localSelected.length!==13 || !chReady);
   $('cancelAllSetupBtn').disabled=locked; show('setup');
+  const oppInfo=$('opponentCharacterInfo');
+  if(oppInfo){
+    if(s.gameMode==='CHARACTER' && s.opponent?.characterName){
+      oppInfo.classList.remove('hidden');
+      oppInfo.innerHTML=`<b>상대 캐릭터 · ${s.opponent.characterName}</b><span>특수능력: ${s.opponent.characterAbility||'특수능력 없음'}</span>`;
+    } else { oppInfo.classList.add('hidden'); oppInfo.innerHTML=''; }
+  }
   socket.emit('preview_setup',{tiles:localSelected.map(x=>x.tile)});
 }
 function toggleSelection(t,wallIndex,el){
