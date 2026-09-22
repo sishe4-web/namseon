@@ -16,6 +16,11 @@
         <div class="form-card">
           <input id="nickname" maxlength="20" placeholder="닉네임" value="Player" />
           <input id="stake" type="number" min="1" step="1000" value="1000000" placeholder="판돈" />
+          <div class="mode-select">
+            <div class="mode-title">게임 모드</div>
+            <label class="mode-card selected"><input type="radio" name="gameMode" value="ORIGINAL" checked><span><b>원본 17보</b><small>현재 규칙 그대로</small></span></label>
+            <label class="mode-card"><input type="radio" name="gameMode" value="CHARACTER"><span><b>캐릭터 17보</b><small>4명의 캐릭터 특수능력</small></span></label>
+          </div>
           <div class="row">
             <button id="createBtn" class="primary">방 만들기</button>
             <button id="joinBtn">방 참가하기</button>
@@ -39,6 +44,22 @@
           <div class="slot"><span>東 · 선</span><strong id="eastName">-</strong><em>READY</em></div>
           <div class="slot"><span>西 · 자</span><strong id="westName">-</strong><em id="westStatus">WAITING</em></div>
         </div>
+      </div>
+    </section>
+
+    <section id="character" class="screen">
+      <div class="topbar"><div class="logo">17步</div><div id="characterRoom" class="muted"></div></div>
+      <div class="character-card">
+        <div class="eyebrow">CHARACTER 17步</div>
+        <h2>캐릭터를 선택하세요</h2>
+        <p>두 플레이어가 서로 다른 캐릭터를 하나씩 선택하면 도라표시패 선택으로 넘어갑니다.</p>
+        <div id="characterChoices" class="character-grid">
+          <button class="character-option" data-character="KAIJI"><strong>이토 카이지</strong><span>특수 론패 2장</span><small>대기패가 아닌 원하는 패 2장을 지정해 해당 패로 반드시 특수 론</small></button>
+          <button class="character-option" data-character="MURAOKA"><strong>무라오카 타카시</strong><span>상대 패산 10장 공개</span><small>조패 라운드에 상대 패산에서 무작위 10장의 종류와 매수를 확인</small></button>
+          <button class="character-option" data-character="WASHIZU"><strong>와시즈 이와오</strong><span>위압감</span><small>상대는 자신의 9번째 타패까지 요구패를 버릴 수 없음</small></button>
+          <button class="character-option" data-character="AKAGI"><strong>아카기 시게루</strong><span>절일문</span><small>만수·통수·삭수 중 한 종류를 지정해 상대가 버릴 수 없게 함</small></button>
+        </div>
+        <div id="characterStatus" class="character-status"></div>
       </div>
     </section>
 
@@ -71,6 +92,7 @@
           <p>34장 중 13장을 골라 손패를 만듭니다.</p>
           <p>3분 안에 확정하지 않으면 현재 선택을 보존하고 부족한 패는 자동 보충합니다. 상태는 노텐리치로 기록됩니다.</p>
           <div class="dora-box"><div><strong>도라표시패</strong><small>선이 고른 패</small></div><span id="setupDoraBig"></span><div class="dora-arrow">→</div><div><strong>실제 도라</strong><small>도라표시패의 다음 패</small></div><span id="setupDoraBigActual"></span></div>
+          <div id="characterAbility" class="character-ability hidden"></div>
         </aside>
       </div>
     </section>
@@ -105,6 +127,6 @@
     <div id="toast" class="toast"></div>
   </main>
   <script src="/socket.io/socket.io.js"></script>
-  <script src="/app.js?v=20260923-nextready-waits-gameover"></script>
+  <script src="/app.js?v=20260923-character-mode"></script>
 </body>
 </html>

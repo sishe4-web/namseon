@@ -17,6 +17,13 @@ const PORT = Number(process.env.PORT || 3000);
 const SETUP_MS = 3 * 60 * 1000;
 const DRAW_LIMIT = 17;
 const rooms = new Map();
+const CHARACTERS = {
+  KAIJI: {name:'이토 카이지', ability:'원하는 특수 론패 2장'},
+  MURAOKA: {name:'무라오카 타카시', ability:'상대 패산 10장 공개'},
+  WASHIZU: {name:'와시즈 이와오', ability:'9순까지 요구패 타패 금지'},
+  AKAGI: {name:'아카기 시게루', ability:'절일문'}
+};
+const CHARACTER_ORDER = ['KAIJI','MURAOKA','WASHIZU','AKAGI'];
 
 const TILE_NAMES = [
   ...Array.from({ length: 9 }, (_, i) => `${i + 1}m`),
@@ -51,6 +58,29 @@ function playerSeat(room, socketId) {
   return null;
 }
 function otherSeat(seat) { return seat === 'EAST' ? 'WEST' : 'EAST'; }
+function characterName(key) { return CHARACTERS[key]?.name || key || ''; }
+function randomRevealCounts(tiles, count=10) {
+  const sample=shuffle([...tiles]).slice(0,count);
+  const counts=countsFromTiles(sample);
+  return Object.entries(counts).filter(([,n])=>n>0).map(([t,n])=>({tile:Number(t),count:n})).sort((a,b)=>a.tile-b.tile);
+}
+function isForbiddenByWashizu(room, seat, tile) {
+  const source=room.players[otherSeat(seat)];
+  return source?.character==='WASHIZU' && room.players[seat].discardCount < 9 && isTerminalOrHonor(tile);
+}
+function isForbiddenByAkagi(room, seat, tile) {
+  const source=room.players[otherSeat(seat)];
+  if(source?.character!=='AKAGI' || source.akagiSuit==null) return false;
+  return tileSuit(tile)===source.akagiSuit && room.players[seat].discardCandidates.some(t=>tileSuit(t)!==source.akagiSuit);
+}
+function canDiscardTile(room, seat, tile) {
+  const p=room.players[seat];
+  if(!p || !p.discardCandidates.includes(tile)) return {ok:false,reason:'유효하지 않은 타패입니다.'};
+  if(isForbiddenByWashizu(room,seat,tile)) return {ok:false,reason:'와시즈의 위압감으로 9순까지 요구패를 버릴 수 없습니다.'};
+  if(isForbiddenByAkagi(room,seat,tile)) return {ok:false,reason:'아카기의 절일문으로 이 수패를 버릴 수 없습니다.'};
+  return {ok:true};
+}
+
 
 // ----- Hand / agari engine -----
 function isChiitoitsu(counts) {
@@ -374,6 +404,9 @@ function countDora(tiles14, indicator) {
 function evaluateRon(room, winnerSeat, winTile, discarderSeat) {
   const p=room.players[winnerSeat];
   if(!p) return {allowed:false,reason:'no player'};
+  if(p.character==='KAIJI' && p.specialRonTiles.includes(winTile) && !p.waits.includes(winTile)) {
+    return {allowed:true,special:'KAIJI',baseHan:5,han:5,fu:30,yaku:[['カイジ特수능력',5]],dora:0,ura:0,classification:{label:'満貫',payout:1}};
+  }
   const context={
     riichi:true,
     ippatsu:p.ippatsu,
@@ -439,6 +472,7 @@ function publicRoom(room, forSocketId) {
   const opp=seat?room.players[otherSeat(seat)]:null;
   return {
     code:room.code,
+    gameMode:room.gameMode,
     phase:room.phase,
     dealer:room.dealer,
     stake:room.stake,
@@ -453,8 +487,14 @@ function publicRoom(room, forSocketId) {
     result:room.result,
     nextReady:room.nextReady || {EAST:false,WEST:false},
     nextReadyCount:Object.values(room.nextReady || {}).filter(Boolean).length,
+    characterChoices:{EAST:room.players.EAST?.character||null,WEST:room.players.WEST?.character||null},
     me: me ? {
       id:me.id, nickname:me.nickname, seat:me.seat,
+      character:me.character, characterName:characterName(me.character),
+      specialRonTiles:(me.specialRonTiles||[]).slice(),
+      akagiSuit:me.akagiSuit,
+      abilityReady:!!me.abilityReady,
+      murauokaReveal:me.character==='MURAOKA' ? (me.murauokaReveal||[]) : [],
       private34Tiles:sortTiles(me.private34Tiles),
       hand13:sortTiles(me.hand13),
       discardCandidates:sortTiles(me.discardCandidates),
@@ -476,6 +516,7 @@ function publicRoom(room, forSocketId) {
     }:null,
     opponent: opp ? {
       id:opp.id, nickname:opp.nickname, seat:opp.seat,
+      character:opp.character, characterName:characterName(opp.character),
       discardedTiles:opp.discardedTiles.slice(),
       discardCount:opp.discardCount,
       riichiDiscardIndex:opp.riichiDiscardIndex,
@@ -500,9 +541,10 @@ function emitRoom(room) {
     if(room.phase==='PLAYING' && room.lastDiscard!=null && room.lastDiscardBy===oppSeat) {
       const p=room.players[seat];
       const wait = p.waits.includes(room.lastDiscard);
+      const specialWait = p.character==='KAIJI' && p.specialRonTiles.includes(room.lastDiscard) && !wait;
       const permanent = p.furiten;
       let evalResult = {allowed:false,reason:permanent?'후리텐':'일시 후리텐'};
-      if(wait && !permanent && !p.temporaryFuriten) evalResult=evaluateRon(room,seat,room.lastDiscard,oppSeat);
+      if((wait || specialWait) && !permanent && !p.temporaryFuriten) evalResult=evaluateRon(room,seat,room.lastDiscard,oppSeat);
       // In this no-draw variant, if a winning tile is discarded but the hand is
       // only a yasume (below mangan), the player necessarily passes on it.
       // Treat that missed ron as minogashi/temporary furiten for the rest of the hand.
@@ -521,14 +563,15 @@ function emitRoom(room) {
 function initialPlayer(id, nickname, seat) {
   return {
     id,nickname,seat,private34Tiles:[],hand13:[],discardCandidates:[],discardedTiles:[],
-    setupConfirmed:false,isTenpai:false,isRiichi:false,ippatsu:false,discardCount:0,riichiDiscardIndex:null,waits:[],furiten:false,money:0,temporaryFuriten:false,setupTimedOut:false
+    setupConfirmed:false,isTenpai:false,isRiichi:false,ippatsu:false,discardCount:0,riichiDiscardIndex:null,waits:[],furiten:false,money:0,temporaryFuriten:false,setupTimedOut:false,
+    character:null,specialRonTiles:[],akagiSuit:null,abilityReady:false,murauokaReveal:[]
   };
 }
 
 function startRound(room) {
   room.dealer='EAST';
   const wall=makeWall();
-  room.phase='DORA_SELECT';
+  room.phase=room.gameMode==='CHARACTER' && !room.charactersLocked ? 'CHARACTER_SELECT' : 'DORA_SELECT';
   room.witnessWall=wall.slice();
   room.players.EAST.private34Tiles=wall.slice(0,34);
   room.players.WEST.private34Tiles=wall.slice(34,68);
@@ -538,6 +581,10 @@ function startRound(room) {
   room.uraDoraIndicator=null;
   room.lastDiscard=null; room.lastDiscardBy=null; room.turn=null; room.winner=null; room.result=null; room.resultEndsAt=null;
   room.nextReady={EAST:false,WEST:false};
+  room.players.EAST.specialRonTiles=[]; room.players.WEST.specialRonTiles=[];
+  room.players.EAST.akagiSuit=null; room.players.WEST.akagiSuit=null;
+  room.players.EAST.abilityReady=false; room.players.WEST.abilityReady=false;
+  room.players.EAST.murauokaReveal=[]; room.players.WEST.murauokaReveal=[];
   room.players.EAST.hand13=[]; room.players.WEST.hand13=[];
   room.players.EAST.discardCandidates=[]; room.players.WEST.discardCandidates=[];
   room.players.EAST.discardedTiles=[]; room.players.WEST.discardedTiles=[];
@@ -554,6 +601,24 @@ function startRound(room) {
   emitRoom(room);
 }
 
+function finishCharacterSelection(room, seat, character) {
+  if(room.phase!=='CHARACTER_SELECT') return;
+  if(!CHARACTERS[character]) return;
+  if(room.players[seat]?.character) return;
+  const other=room.players[otherSeat(seat)];
+  if(other?.character===character) return;
+  room.players[seat].character=character;
+  if(room.players.EAST?.character && room.players.WEST?.character) {
+    room.charactersLocked=true;
+    room.phase='DORA_SELECT';
+    room.players.EAST.abilityReady=false; room.players.WEST.abilityReady=false;
+    io.to(room.players.EAST.id).emit('notice','캐릭터 선택 완료. 선이 도라표시패를 고릅니다.');
+    io.to(room.players.WEST.id).emit('notice','캐릭터 선택 완료. 선이 도라표시패를 고릅니다.');
+    io.to(room.players.EAST.id).emit('dora_pool',{poolSize:0});
+    emitRoom(room);
+  } else emitRoom(room);
+}
+
 function finishDoraSelection(room,index) {
   if(room.phase!=='DORA_SELECT') return;
   const i=Math.max(0,Math.min(room.doraPool.length-2,index|0));
@@ -561,6 +626,11 @@ function finishDoraSelection(room,index) {
   room.doraIndicator=room.doraPool[i];
   room.uraDoraIndicator=room.doraPool[i+1];
   room.phase='SETUP'; room.setupEndsAt=Date.now()+SETUP_MS;
+  for(const seat of ['EAST','WEST']) {
+    const p=room.players[seat];
+    const opp=room.players[otherSeat(seat)];
+    p.murauokaReveal = p.character==='MURAOKA' ? randomRevealCounts(opp.private34Tiles,10) : [];
+  }
   io.to(room.players.EAST.id).emit('dora_selected',{dora:room.doraIndicator});
   io.to(room.players.WEST.id).emit('dora_selected',{dora:room.doraIndicator});
   emitRoom(room);
@@ -577,6 +647,14 @@ function lockSetup(room, seat, hand13, forced=false) {
   }
   // Even after the 3-minute limit, the player still has to choose exactly 13 tiles.
   if(selected.length!==13) return;
+  if(p.character==='KAIJI') {
+    const special=[...new Set((p.specialRonTiles||[]).map(Number).filter(t=>Number.isInteger(t)&&t>=0&&t<34))];
+    if(special.length!==2) return;
+    const naturalWaits=getWaits(selected);
+    if(special.some(t=>naturalWaits.includes(t))) return;
+    p.specialRonTiles=special;
+  }
+  if(p.character==='AKAGI' && !['m','p','s'].includes(p.akagiSuit)) return;
   p.hand13=selected;
   const restCounts=countsFromTiles(p.private34Tiles);
   for(const t of selected) restCounts[t]--;
@@ -586,11 +664,12 @@ function lockSetup(room, seat, hand13, forced=false) {
   p.waits=timedOut ? [] : val.waits;
   p.setupConfirmed=true;
   p.setupTimedOut=!!timedOut;
+  p.abilityReady=true;
   // Every player makes a first-turn riichi declaration; noten is allowed and recorded.
   p.isRiichi=true;
   p.ippatsu=true;
   if(!p.waits.length) p.isTenpai=false;
-  if(room.players.EAST.setupConfirmed && room.players.WEST.setupConfirmed) beginPlay(room);
+  if(room.players.EAST.setupConfirmed && room.players.WEST.setupConfirmed && room.players.EAST.abilityReady && room.players.WEST.abilityReady) beginPlay(room);
   else emitRoom(room);
 }
 
@@ -604,14 +683,16 @@ function beginPlay(room) {
 
 function updateFuriten(player) {
   const own = new Set(player.discardedTiles);
-  player.furiten = player.waits.some(t=>own.has(t));
+  const wins = [...(player.waits||[]), ...(player.specialRonTiles||[])];
+  player.furiten = wins.some(t=>own.has(t));
 }
 
 function discard(room, seat, tile) {
   if(room.phase!=='PLAYING' || room.turn!==seat) return {ok:false,reason:'턴이 아닙니다.'};
   const p=room.players[seat];
+  const check=canDiscardTile(room,seat,tile);
+  if(!check.ok)return check;
   const idx=p.discardCandidates.indexOf(tile);
-  if(idx<0)return {ok:false,reason:'유효하지 않은 타패입니다.'};
   p.discardCandidates.splice(idx,1);
   p.discardedTiles.push(tile);
   if (p.discardCount===0 && p.isRiichi) p.riichiDiscardIndex=0;
@@ -642,7 +723,9 @@ function doRon(room, winnerSeat) {
   const tile=room.lastDiscard;
   if(room.lastDiscardBy!==discarder)return {ok:false,reason:'해당 패로 론할 수 없습니다.'};
   const p=room.players[winnerSeat];
-  if(!p.waits.includes(tile))return {ok:false,reason:'오름패가 아닙니다.'};
+  const naturalWait=p.waits.includes(tile);
+  const specialWait=p.character==='KAIJI' && p.specialRonTiles.includes(tile) && !naturalWait;
+  if(!naturalWait && !specialWait)return {ok:false,reason:'오름패가 아닙니다.'};
   if(p.furiten)return {ok:false,reason:'후리텐입니다.'};
   if(p.temporaryFuriten)return {ok:false,reason:'일시 후리텐입니다.'};
   const evaluated=evaluateRon(room,winnerSeat,tile,discarder);
@@ -655,7 +738,7 @@ function doRon(room, winnerSeat) {
   room.result={
     type:'RON',winner:winnerSeat,loser:discarder,tile,han:evaluated.han,fu:evaluated.fu,
     yaku:evaluated.yaku,classification:evaluated.classification.label,payment,
-    baseHan:evaluated.baseHan,dora:evaluated.dora,ura:evaluated.ura,
+    baseHan:evaluated.baseHan,dora:evaluated.dora,ura:evaluated.ura,special:evaluated.special||null,
     resultEndsAt:room.resultEndsAt,
     winnerHand:resultHandView(p, tile),
     loserHand:resultHandView(room.players[discarder], null),
@@ -686,10 +769,11 @@ function doDraw(room) {
 }
 
 io.on('connection', socket=>{
-  socket.on('create_room', ({nickname,stake})=>{
+  socket.on('create_room', ({nickname,stake,gameMode})=>{
     const code=roomCode();
     const startingMoney=Math.max(Number(stake)||1000000,1000000)*10;
-    const room={code,stake:Number(stake)||1000000,startingMoney,players:{EAST:initialPlayer(socket.id,String(nickname||'Player 1').slice(0,20),'EAST'),WEST:null},dealer:'EAST',roundNumber:1,phase:'WAITING',setupEndsAt:null,turn:null,lastDiscard:null,lastDiscardBy:null,winner:null,result:null,doraIndicator:null,uraDoraIndicator:null,doraPool:[]};
+    const mode=gameMode==='CHARACTER'?'CHARACTER':'ORIGINAL';
+    const room={code,gameMode:mode,charactersLocked:false,stake:Number(stake)||1000000,startingMoney,players:{EAST:initialPlayer(socket.id,String(nickname||'Player 1').slice(0,20),'EAST'),WEST:null},dealer:'EAST',roundNumber:1,phase:'WAITING',setupEndsAt:null,turn:null,lastDiscard:null,lastDiscardBy:null,winner:null,result:null,doraIndicator:null,uraDoraIndicator:null,doraPool:[]};
     room.players.EAST.money=startingMoney;
     rooms.set(code,room); socket.join(code); socket.data.roomCode=code;
     socket.emit('room_created',{code}); emitRoom(room);
@@ -708,10 +792,38 @@ io.on('connection', socket=>{
     startRound(room);
   });
 
+  socket.on('select_character',({character})=>{
+    const room=rooms.get(socket.data.roomCode); if(!room)return;
+    const seat=playerSeat(room,socket.id); if(!seat)return;
+    if(room.gameMode!=='CHARACTER')return;
+    if(room.phase!=='CHARACTER_SELECT')return;
+    if(room.players[seat].character)return socket.emit('error_message','이미 캐릭터를 선택했습니다.');
+    if(room.players[otherSeat(seat)]?.character===character)return socket.emit('error_message','상대가 이미 선택한 캐릭터입니다.');
+    finishCharacterSelection(room,seat,String(character||''));
+  });
+
   socket.on('select_dora',({index})=>{
     const room=rooms.get(socket.data.roomCode); if(!room)return;
     if(playerSeat(room,socket.id)!=='EAST')return socket.emit('error_message','현재 선만 도라표시패를 선택할 수 있습니다.');
     finishDoraSelection(room,index);
+  });
+
+  socket.on('set_kaiji_tiles',({tiles})=>{
+    const room=rooms.get(socket.data.roomCode); if(!room)return;
+    const seat=playerSeat(room,socket.id); if(!seat || room.phase!=='SETUP')return;
+    const p=room.players[seat]; if(p.character!=='KAIJI' || p.setupConfirmed)return;
+    const clean=[...new Set((Array.isArray(tiles)?tiles:[]).map(Number).filter(t=>Number.isInteger(t)&&t>=0&&t<34))];
+    if(clean.length!==2)return socket.emit('error_message','카이지 특수 론패를 2장 선택해야 합니다.');
+    if(p.hand13?.length===13 && clean.some(t=>getWaits(p.hand13).includes(t)))return socket.emit('error_message','현재 대기패는 특수 론패로 선택할 수 없습니다.');
+    p.specialRonTiles=clean; emitRoom(room);
+  });
+
+  socket.on('set_akagi_suit',({suit})=>{
+    const room=rooms.get(socket.data.roomCode); if(!room)return;
+    const seat=playerSeat(room,socket.id); if(!seat || room.phase!=='SETUP')return;
+    const p=room.players[seat]; if(p.character!=='AKAGI' || p.setupConfirmed)return;
+    if(!['m','p','s'].includes(suit))return socket.emit('error_message','절일문 수패를 선택하세요.');
+    p.akagiSuit=suit; p.abilityReady=true; emitRoom(room);
   });
 
   socket.on('preview_setup',({tiles})=>{

@@ -5,6 +5,7 @@ let lastPhase = null;
 let setupTimerHandle = null;
 let setupPreview = [];
 let resultTimerHandle = null;
+let localKaijiTiles = [];
 
 const $ = id => document.getElementById(id);
 const screens = [...document.querySelectorAll('.screen')];
@@ -18,7 +19,7 @@ const YAKU_KO={
   '混一色':'혼일색','清一色':'청일색','純全帯么九':'준찬타','混全帯么九':'찬타','混老頭':'혼노두','対々和':'또이또이',
   '一気通貫':'일기통관','三色同順':'삼색동순','三色同刻':'삼색동각','小三元':'소삼원','三暗刻':'산안커','七対子':'치또이츠',
   '国士無双':'국사무쌍','大四喜':'대사희','小四喜':'소사희','四暗刻':'스안커','九蓮宝燈':'구련보등','緑一色':'녹일색',
-  '清老頭':'청노두','字一色':'자일색','大三元':'대삼원','ドラ':'도라','裏ドラ':'우라도라'
+  '清老頭':'청노두','字一色':'자일색','大三元':'대삼원','ドラ':'도라','裏ドラ':'우라도라','カイジ特수능력':'카이지 특수능력'
 };
 function yakuKo(name){
   if(name.startsWith('役牌 ')) return `자풍패(${name.slice(3).replace('東','동').replace('南','남').replace('西','서').replace('北','북')})`;
@@ -81,11 +82,21 @@ function setTileContent(container,t,cls=''){
 }
 function toast(msg){const x=$('toast'); x.textContent=msg; x.classList.add('show'); setTimeout(()=>x.classList.remove('show'),2200)}
 
-$('createBtn').onclick=()=>socket.emit('create_room',{nickname:$('nickname').value.trim()||'Player 1',stake:Number($('stake').value)||1000000});
+$('createBtn').onclick=()=>{const mode=document.querySelector('input[name=gameMode]:checked')?.value||'ORIGINAL';socket.emit('create_room',{nickname:$('nickname').value.trim()||'Player 1',stake:Number($('stake').value)||1000000,gameMode:mode})};
+document.querySelectorAll('input[name=gameMode]').forEach(r=>r.addEventListener('change',()=>document.querySelectorAll('.mode-card').forEach(c=>c.classList.toggle('selected',c.querySelector('input')?.checked))));
 $('joinBtn').onclick=()=>socket.emit('join_room',{nickname:$('nickname').value.trim()||'Player 2',code:$('joinCode').value.trim()});
 $('copyRoomBtn').onclick=async()=>{await navigator.clipboard?.writeText($('bigRoomCode').textContent); toast('방 코드를 복사했습니다.')};
+document.querySelectorAll('.character-option').forEach(btn=>btn.addEventListener('click',()=>{
+  const ch=btn.dataset.character;
+  if(state?.characterChoices?.EAST===ch || state?.characterChoices?.WEST===ch){toast('상대가 이미 선택한 캐릭터입니다.');return;}
+  socket.emit('select_character',{character:ch});
+}));
+
 $('confirmHandBtn').onclick=()=>{
   if(localSelected.length!==13){toast('13장을 선택하세요.');return}
+  const ch=state?.me?.character;
+  if(ch==='KAIJI' && localKaijiTiles.length!==2){toast('카이지 특수 론패를 2장 선택하세요.');return}
+  if(ch==='AKAGI' && !state?.me?.akagiSuit){toast('절일문 수패를 선택하세요.');return}
   socket.emit('confirm_hand',{tiles:localSelected.map(x=>x.tile)});
 };
 $('ronBtn').onclick=()=>socket.emit('declare_ron');
@@ -98,11 +109,75 @@ function renderLobby(s){
   $('westName').textContent=s.me?.seat==='WEST'?s.me?.nickname:(s.opponent?.seat==='WEST'?s.opponent?.nickname:'-');
   $('westStatus').textContent=s.opponent?'READY':'WAITING';
 }
+function renderCharacter(s){
+  show('character');
+  $('characterRoom').textContent='ROOM '+s.code;
+  const choices=s.characterChoices||{};
+  const mine=s.me?.character;
+  document.querySelectorAll('.character-option').forEach(btn=>{
+    const ch=btn.dataset.character;
+    const taken=choices.EAST===ch||choices.WEST===ch;
+    btn.classList.toggle('selected',mine===ch);
+    btn.classList.toggle('taken',taken&&mine!==ch);
+    btn.disabled=!!mine|| (taken&&mine!==ch);
+  });
+  const status=$('characterStatus');
+  if(mine) status.textContent=`내 선택: ${s.me.characterName} · 상대 선택을 기다리는 중`;
+  else status.textContent='캐릭터 하나를 선택하세요.';
+}
+
+function localCurrentWaits(){
+  const hand=localSelected.map(x=>x.tile);
+  if(hand.length!==13)return [];
+  const counts=Array(34).fill(0); hand.forEach(t=>counts[t]++);
+  const waits=[];
+  for(let t=0;t<34;t++){if(counts[t]>=4)continue;counts[t]++;if(isAgariLocal(counts))waits.push(t);counts[t]--;}
+  return waits;
+}
+
+function renderAbilityPanel(s){
+  const box=$('characterAbility');
+  if(!box)return;
+  if(s.gameMode!=='CHARACTER' || !s.me?.character){box.classList.add('hidden');return;}
+  box.classList.remove('hidden');
+  const ch=s.me.character;
+  if(ch==='KAIJI'){
+    if(!localKaijiTiles.length && s.me.specialRonTiles?.length) localKaijiTiles=[...s.me.specialRonTiles];
+    const waits=new Set(localCurrentWaits());
+    const ready=localKaijiTiles.length===2 && localKaijiTiles.every(t=>!waits.has(t));
+    box.innerHTML=`<div class="ability-title">${s.me.characterName} · 특수 론</div><p>현재 대기패를 제외한 패 중 2장을 골라, 상대가 그 패를 버리면 반드시 특수 론할 수 있습니다.</p><div class="ability-selected">선택: ${localKaijiTiles.map(tileLabel).join(' · ')||'없음'} <b>${ready?'준비 완료':'2장 선택 필요'}</b></div><div id="kaijiTilePicker" class="ability-tile-picker"></div>`;
+    const picker=$('kaijiTilePicker');
+    for(let t=0;t<34;t++){
+      const el=renderTile(t,'tile ability-tile'+(localKaijiTiles.includes(t)?' selected':'')+(waits.has(t)?' disabled':'') );
+      el.title=waits.has(t)?`${tileLabel(t)} · 현재 대기패라 선택 불가`:tileLabel(t);
+      el.onclick=()=>{
+        if(waits.has(t))return toast('현재 대기패는 특수 론패로 지정할 수 없습니다.');
+        if(localKaijiTiles.includes(t)){localKaijiTiles=localKaijiTiles.filter(x=>x!==t);}
+        else {if(localKaijiTiles.length>=2)return toast('특수 론패는 2장까지입니다.');localKaijiTiles.push(t);}
+        socket.emit('set_kaiji_tiles',{tiles:localKaijiTiles}); renderAbilityPanel(state);
+      };
+      picker.appendChild(el);
+    }
+  } else if(ch==='MURAOKA'){
+    const rows=(s.me.murauokaReveal||[]).map(x=>waitTileMarkup(x.tile,x.count)).join('');
+    box.innerHTML=`<div class="ability-title">${s.me.characterName} · 패산 간파</div><p>상대 패산에서 무작위로 뽑힌 10장의 종류와 매수만 알 수 있습니다. 텐파이 여부는 알 수 없습니다.</p><div class="revealed-count">공개된 10장 <span>${rows||'표시 준비 중'}</span></div>`;
+  } else if(ch==='WASHIZU'){
+    box.innerHTML=`<div class="ability-title">${s.me.characterName} · 위압감</div><p>상대는 자신의 <b>9번째 타패까지</b> 요구패(1·9·자패)를 버릴 수 없습니다.</p><div class="ability-ready">특수능력 자동 적용</div>`;
+  } else if(ch==='AKAGI'){
+    const suitNames={m:'만수',p:'통수',s:'삭수'};
+    box.innerHTML=`<div class="ability-title">${s.me.characterName} · 절일문</div><p>만수·통수·삭수 중 하나를 골라 상대가 그 수패를 버릴 수 없게 합니다. 단, 그 수패만 남으면 버릴 수 있습니다.</p><div class="suit-picker">${Object.entries(suitNames).map(([k,v])=>`<button class="suit-btn ${s.me.akagiSuit===k?'selected':''}" data-suit="${k}">${v}</button>`).join('')}</div><div class="ability-ready">${s.me.akagiSuit?suitNames[s.me.akagiSuit]+' 금지 적용':'수패를 선택하세요.'}</div>`;
+    box.querySelectorAll('.suit-btn').forEach(btn=>btn.onclick=()=>socket.emit('set_akagi_suit',{suit:btn.dataset.suit}));
+  }
+  const chReady=ch==='MURAOKA'||ch==='WASHIZU'||!!s.me.abilityReady || (ch==='KAIJI'&&localKaijiTiles.length===2) || (ch==='AKAGI'&&!!s.me.akagiSuit);
+  $('confirmHandBtn').disabled=!!s.me.setupConfirmed || !chReady || localSelected.length!==13;
+}
+
 function startSetup(s){
   const wall=s.me.private34Tiles||[];
   // The server sends tile types only. When restoring an existing selection,
   // map each occurrence to a concrete position in this 34-tile wall.
   if (lastPhase !== 'SETUP' && !(s.me?.setupConfirmed)) {
+    localKaijiTiles=[...(s.me?.specialRonTiles||[])];
     setupPreview=[];
     const used=new Set();
     localSelected=[];
@@ -127,7 +202,7 @@ function startSetup(s){
     el.onclick=()=>toggleSelection(t,wallIndex,el);
     container.appendChild(el);
   });
-  renderSelected(); updateSetupTimer(s.setupEndsAt); show('setup');
+  renderSelected(); updateSetupTimer(s.setupEndsAt); renderAbilityPanel(s); show('setup');
   socket.emit('preview_setup',{tiles:localSelected.map(x=>x.tile)});
 }
 function toggleSelection(t,wallIndex,el){
@@ -142,6 +217,7 @@ function toggleSelection(t,wallIndex,el){
     el.classList.add('selected');
   }
   renderSelected();
+  if(state) renderAbilityPanel(state);
   socket.emit('preview_setup',{tiles:localSelected.map(x=>x.tile)});
 }
 function remainingWaitCount(tile, hand){
@@ -175,6 +251,7 @@ function renderSelected(){
       const wallEl=document.querySelector(`#privateWall .tile[data-wall-index=\"${x.wallIndex}\"]`);
       if(wallEl) wallEl.classList.remove('selected');
       renderSelected();
+      if(state) renderAbilityPanel(state);
     };
     box.appendChild(el);
   });
@@ -229,6 +306,7 @@ function renderGame(s){
   $('opponentMoney').textContent=money(s.opponent?.money);
   $('mySeat').textContent=s.me.seat==='EAST'?'동':'서';
   $('opponentName').textContent=s.opponent?.nickname||'상대';
+  if($('opponentRiichi')) $('opponentRiichi').title=s.opponent?.characterName||'';
   $('opponentSeat').textContent=s.opponent?.seat==='EAST'?'동':'서';
   $('opponentCount').textContent=`${s.opponent?.discardCount||0}/17`;
   setTileContent($('doraGame'),s.doraIndicator,'tile-mini');
@@ -315,7 +393,7 @@ function renderResult(s){
     const winnerName=r.winner===s.me.seat?s.me.nickname:(s.opponent?.nickname||'상대');
     const loserName=r.loser===s.me.seat?s.me.nickname:(s.opponent?.nickname||'상대');
     const finalLine=final?`<div class=\"final-money-line\">${loserName}의 보유금이 0원이 되어 대국이 종료됩니다.</div>`:'';
-    $('resultDetail').innerHTML=`<div class=\"result-burst ${final?'final-burst':''}"><b>${r.winner===s.me.seat?'승리':'패배'}</b></div><div>${winnerName} 승 · ${loserName} 패</div><div class=\"payment-line\">${loserName} → ${winnerName} <b>${money(r.payment)}</b></div><div>${r.han}판 ${r.fu? r.fu+'부':''}</div><div>기본 ${r.baseHan}판 · 도라 ${r.dora} · 우라도라 ${r.ura}</div>${finalLine}`;
+    $('resultDetail').innerHTML=`<div class=\"result-burst ${final?'final-burst':''}"><b>${r.winner===s.me.seat?'승리':'패배'}</b></div><div>${winnerName} 승 · ${loserName} 패</div><div class=\"payment-line\">${loserName} → ${winnerName} <b>${money(r.payment)}</b></div><div>${r.han}판 ${r.fu? r.fu+'부':''}</div><div>기본 ${r.baseHan}판 · 도라 ${r.dora} · 우라도라 ${r.ura}</div>${specialLine||''}${finalLine}`;
     handBox.innerHTML=renderResultHand(`${winnerName}의 화료 형태 · 론패 포함`,r.winnerHand,r.tile);
     const yl=$('yakuList');yl.innerHTML='';(r.yaku||[]).forEach(y=>{const x=document.createElement('div');x.className='yaku '+yakuRarity(Number(y[1])||0);x.innerHTML=`<b>${yakuKo(y[0])}</b><span>${y[1]}판</span>`;yl.appendChild(x)});
   } else {
@@ -339,6 +417,7 @@ socket.on('state',s=>{
   const previousPhase=lastPhase;
   state=s;
   if(s.phase==='WAITING'){renderLobby(s);show('lobby');}
+  else if(s.phase==='CHARACTER_SELECT') renderCharacter(s);
   else if(s.phase==='DORA_SELECT') {show('dora');$('doraRoom').textContent='ROOM '+s.code; const isDealer=s.dealer===s.me?.seat;$('doraWait').classList.toggle('hidden',isDealer);}
   else if(s.phase==='SETUP') startSetup(s);
   else if(s.phase==='PLAYING') renderGame(s);
