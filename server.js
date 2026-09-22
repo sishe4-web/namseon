@@ -21,9 +21,9 @@ const RON_REVEAL_MS = 2200;
 const DRAW_LIMIT = 17;
 const rooms = new Map();
 const CHARACTERS = {
-  KAIJI: {name:'이토 카이지', ability:'원하는 특수 론패 2장'},
-  MURAOKA: {name:'무라오카 타카시', ability:'상대 패산 10장 공개'},
-  WASHIZU: {name:'와시즈 이와오', ability:'9순까지 요구패 타패 금지'},
+  KAIJI: {name:'이토 카이지', ability:'만관 이상 텐파이 시 특수 론패 2장'},
+  MURAOKA: {name:'무라오카 타카시', ability:'상대 패산 34장 중 랜덤 10종류 확인'},
+  WASHIZU: {name:'와시즈 이와오', ability:'9순 이전까지 요구패 타패 금지'},
   AKAGI: {name:'아카기 시게루', ability:'절일문'}
 };
 const CHARACTER_ORDER = ['KAIJI','MURAOKA','WASHIZU','AKAGI'];
@@ -63,18 +63,27 @@ function playerSeat(room, socketId) {
 function otherSeat(seat) { return seat === 'EAST' ? 'WEST' : 'EAST'; }
 function characterName(key) { return CHARACTERS[key]?.name || key || ''; }
 function randomRevealCounts(tiles, count=10) {
-  const sample=shuffle([...tiles]).slice(0,count);
-  const counts=countsFromTiles(sample);
-  return Object.entries(counts).filter(([,n])=>n>0).map(([t,n])=>({tile:Number(t),count:n})).sort((a,b)=>a.tile-b.tile);
+  // Pick 10 DISTINCT tile types from the opponent's 34-tile wall, then
+  // reveal the actual number of copies of each selected type in that wall.
+  const wallCounts=countsFromTiles(tiles);
+  const available=[];
+  for(let t=0;t<34;t++) if(wallCounts[t]>0) available.push(t);
+  return shuffle(available).slice(0,count)
+    .map(t=>({tile:t,count:wallCounts[t]}))
+    .sort((a,b)=>a.tile-b.tile);
 }
 function isForbiddenByWashizu(room, seat, tile) {
   const source=room.players[otherSeat(seat)];
-  return source?.character==='WASHIZU' && room.players[seat].discardCount < 9 && isTerminalOrHonor(tile);
+  if(source?.character!=='WASHIZU' || room.players[seat].discardCount >= 8 || !isTerminalOrHonor(tile)) return false;
+  // Before the 9th discard, a terminal/honor is still allowed when it is
+  // the only kind of tile left that can be discarded.
+  return room.players[seat].discardCandidates.some(t=>!isTerminalOrHonor(t));
 }
 function isForbiddenByAkagi(room, seat, tile) {
   const source=room.players[otherSeat(seat)];
   if(source?.character!=='AKAGI' || source.akagiSuit==null) return false;
-  return tileSuit(tile)===source.akagiSuit && room.players[seat].discardCandidates.some(t=>tileSuit(t)!==source.akagiSuit);
+  // From the 14th discard onward, the restriction expires.
+  return room.players[seat].discardCount < 13 && tileSuit(tile)===source.akagiSuit && room.players[seat].discardCandidates.some(t=>tileSuit(t)!==source.akagiSuit);
 }
 function canDiscardTile(room, seat, tile) {
   const p=room.players[seat];
@@ -404,10 +413,36 @@ function countDora(tiles14, indicator) {
   const d=doraFromIndicator(indicator); return tiles14.filter(t=>t===d).length;
 }
 
+function getManganTenpaiWaits(room, seat, hand13) {
+  if(!Array.isArray(hand13) || hand13.length!==13) return [];
+  const player=room.players[seat];
+  if(!player) return [];
+  return getWaits(hand13).filter(t=>{
+    const tiles=hand13.concat([t]);
+    const base=scoreBeforeUra(tiles,t,seat,{riichi:true,ippatsu:false,houtei:false,winByRon:true});
+    if(!base) return false;
+    const dora=countDora(tiles,room.doraIndicator);
+    const cls=classifyScore(base.han+dora,base.fu,base.yakumanCount);
+    return cls.payout>0;
+  });
+}
+
+function kaijiAbilityEligible(room, seat, hand13) {
+  return getManganTenpaiWaits(room,seat,hand13).length>0;
+}
+
 function evaluateRon(room, winnerSeat, winTile, discarderSeat) {
   const p=room.players[winnerSeat];
   if(!p) return {allowed:false,reason:'no player'};
-  if(p.character==='KAIJI' && p.specialRonTiles.includes(winTile) && !p.waits.includes(winTile)) {
+
+  // Furiten applies to Kaiji's special Ron tiles too.  In particular, if a
+  // lower-value natural wait is discarded and Kaiji cannot legally Ron it
+  // because it is below mangan, that missed winning tile creates temporary
+  // furiten.  The special-ron tiles must remain blocked until the hand ends.
+  if(p.furiten) return {allowed:false,reason:'후리텐입니다.'};
+  if(p.temporaryFuriten) return {allowed:false,reason:'일시 후리텐입니다.'};
+
+  if(p.character==='KAIJI' && p.kaijiAbilityEligible && p.specialRonTiles.includes(winTile) && !p.waits.includes(winTile)) {
     return {allowed:true,special:'KAIJI',baseHan:5,han:5,fu:30,yaku:[['カイジ特수능력',5]],dora:0,ura:0,classification:{label:'満貫',payout:1}};
   }
   const context={
@@ -513,6 +548,8 @@ function publicRoom(room, forSocketId) {
       specialRonTiles:(me.specialRonTiles||[]).slice(),
       akagiSuit:me.akagiSuit,
       abilityReady:!!me.abilityReady,
+      abilityEligible:me.character==='KAIJI' ? !!me.kaijiAbilityEligible : !!me.abilityReady,
+      abilityReason:me.character==='KAIJI' ? (me.kaijiAbilityEligible?'만관 이상 텐파이 · 특수능력 사용 가능':'노텐 또는 만관 이상 텐파이 아님 · 특수능력 사용 불가') : null,
       murauokaReveal:me.character==='MURAOKA' ? (me.murauokaReveal||[]) : [],
       private34Tiles:sortTiles(me.private34Tiles),
       hand13:sortTiles(me.hand13),
@@ -569,8 +606,11 @@ function emitRoom(room) {
       // only a yasume (below mangan), the player necessarily passes on it.
       // Treat that missed ron as minogashi/temporary furiten for the rest of the hand.
       if(wait && !permanent && !p.temporaryFuriten && !evalResult.allowed && evalResult.reason==='만관 조건 미달') {
+        // Kaiji may have a separate special-ron tile that is mangan-eligible,
+        // but passing on this cheaper natural wait still causes furiten.
+        // Therefore the special-ron tile is also unavailable until the hand ends.
         p.temporaryFuriten=true;
-        evalResult={allowed:false,reason:'미노가시 후리텐'};
+        evalResult={allowed:false,reason:'미노가시 후리텐 · 카이지 특수 론패도 사용 불가'};
       }
       if(evalResult.allowed && !room.ronBlockEndsAt) room.ronBlockEndsAt=Date.now()+2000;
       payload.ronBlockEndsAt=room.ronBlockEndsAt||null;
@@ -586,7 +626,7 @@ function initialPlayer(id, nickname, seat) {
   return {
     id,nickname,seat,private34Tiles:[],hand13:[],discardCandidates:[],discardedTiles:[],
     setupConfirmed:false,isTenpai:false,isRiichi:false,ippatsu:false,discardCount:0,riichiDiscardIndex:null,waits:[],furiten:false,money:0,temporaryFuriten:false,setupTimedOut:false,
-    character:null,specialRonTiles:[],akagiSuit:null,abilityReady:false,murauokaReveal:[],turnEndsAt:null
+    character:null,specialRonTiles:[],akagiSuit:null,abilityReady:false,kaijiAbilityEligible:false,murauokaReveal:[],turnEndsAt:null
   };
 }
 
@@ -611,6 +651,7 @@ function startRound(room) {
   room.players.EAST.specialRonTiles=[]; room.players.WEST.specialRonTiles=[];
   room.players.EAST.akagiSuit=null; room.players.WEST.akagiSuit=null;
   room.players.EAST.abilityReady=false; room.players.WEST.abilityReady=false;
+  room.players.EAST.kaijiAbilityEligible=false; room.players.WEST.kaijiAbilityEligible=false;
   room.players.EAST.murauokaReveal=[]; room.players.WEST.murauokaReveal=[];
   room.orderDrawTiles=shuffle(Array.from({length:9},(_,i)=>i));
   room.orderDrawSelections={EAST:null,WEST:null};
@@ -680,6 +721,7 @@ function finishCharacterSelection(room, seat, character) {
     room.characterPickerSeat=null;
     room.phase='DORA_REVEAL';
     room.players.EAST.abilityReady=false; room.players.WEST.abilityReady=false;
+  room.players.EAST.kaijiAbilityEligible=false; room.players.WEST.kaijiAbilityEligible=false;
     beginDoraReveal(room);
   } else {
     room.characterPickerSeat=otherSeat(seat);
@@ -712,7 +754,7 @@ function finishDoraReveal(room) {
   for(const seat of ['EAST','WEST']) {
     const p=room.players[seat];
     const opp=room.players[otherSeat(seat)];
-    p.murauokaReveal = p.character==='MURAOKA' ? randomRevealCounts(opp.private34Tiles,8) : [];
+    p.murauokaReveal = p.character==='MURAOKA' ? randomRevealCounts(opp.private34Tiles,10) : [];
   }
   emitRoom(room);
 }
@@ -736,11 +778,17 @@ function lockSetup(room, seat, hand13, forced=false) {
   // The 13-tile confirmation is independent from Kaiji's optional special-ron setup.
   // If special tiles were selected, keep only valid ones (max 2, not ordinary waits).
   // This prevents an invalid/partial ability selection from blocking the start of the hand.
-  if(!forced && room.gameMode==='CHARACTER' && p.character==='KAIJI') {
-    const waits=new Set(getWaits(selected));
-    p.specialRonTiles=[...new Set((p.specialRonTiles||[]).map(Number))]
-      .filter(t=>Number.isInteger(t)&&t>=0&&t<34&&!waits.has(t))
-      .slice(0,2);
+  if(room.gameMode==='CHARACTER' && p.character==='KAIJI') {
+    p.kaijiAbilityEligible=!timedOut && kaijiAbilityEligible(room,seat,selected);
+    if(p.kaijiAbilityEligible) {
+      const waits=new Set(getWaits(selected));
+      p.specialRonTiles=[...new Set((p.specialRonTiles||[]).map(Number))]
+        .filter(t=>Number.isInteger(t)&&t>=0&&t<34&&!waits.has(t))
+        .slice(0,2);
+    } else {
+      // Noten or no mangan-or-higher wait: Kaiji's special ability is unavailable.
+      p.specialRonTiles=[];
+    }
   }
   if(!forced && room.gameMode==='CHARACTER' && p.character==='AKAGI' && !['m','p','s'].includes(p.akagiSuit)) {
     io.to(p.id).emit('error_message','아카기의 절일문 수패(만수·통수·삭수)를 먼저 선택해야 합니다.'); return;
@@ -759,7 +807,7 @@ function lockSetup(room, seat, hand13, forced=false) {
   p.isRiichi=true;
   p.ippatsu=true;
   if(!p.waits.length) p.isTenpai=false;
-  if(room.players.EAST.setupConfirmed && room.players.WEST.setupConfirmed && room.players.EAST.abilityReady && room.players.WEST.abilityReady) beginPlay(room);
+  if(room.players.EAST.setupConfirmed && room.players.WEST.setupConfirmed) beginPlay(room);
   else emitRoom(room);
 }
 
@@ -770,7 +818,7 @@ function unlockSetup(room, seat) {
   if(!p?.setupConfirmed) return {ok:false,reason:'아직 패를 확정하지 않았습니다.'};
   if(opp?.setupConfirmed) return {ok:false,reason:'상대도 이미 패를 확정했습니다.'};
   p.setupConfirmed=false;
-  p.isRiichi=false; p.ippatsu=false; p.abilityReady=false;
+  p.isRiichi=false; p.ippatsu=false; p.abilityReady=false; p.kaijiAbilityEligible=false;
   room.setupUnlock[seat]=true;
   emitRoom(room);
   return {ok:true};
@@ -825,8 +873,15 @@ function discard(room, seat, tile) {
   room.ronBlockEndsAt=null;
   // 미노가시 후리텐은 이 변형에서는 패가 자동으로 들어오는 드로우가 없으므로
   // 자신의 다음 타패로 해제하지 않고 해당 국 끝까지 유지한다.
-  // Ippatsu ends when that player makes their first discard.
-  p.ippatsu=false;
+  // Opening ippatsu window: both players are allowed to claim ippatsu on the
+  // opponent's first discard.  The old code cleared the discarder immediately,
+  // which meant EAST could never get ippatsu on WEST's first discard.
+  // Keep both flags alive until both players have made their first discard;
+  // after that opening exchange, ippatsu ends for both players.
+  if(room.players.EAST.discardCount>=1 && room.players.WEST.discardCount>=1) {
+    room.players.EAST.ippatsu=false;
+    room.players.WEST.ippatsu=false;
+  }
   updateFuriten(p);
   // Keep the confirmed 13-tile hand visible throughout the 17-discard play.
   // Only the discard candidate pool is consumed by each discard.
@@ -894,12 +949,12 @@ function doDraw(room) {
     room.phase='DRAW';
     room.resultEndsAt=Date.now()+10000;
     const drawStake=room.stake;
-    room.players.EAST.money = Math.max(0, room.players.EAST.money - drawStake);
-    room.players.WEST.money = Math.max(0, room.players.WEST.money - drawStake);
-    const minBalance=Math.min(room.players.EAST.money,room.players.WEST.money);
+    // A draw increases only the stake. Neither player's money is removed here.
+    // The next stake can never exceed what either player currently owns.
     const proposed=drawStake*2;
-    const nextStake=Math.min(proposed,minBalance);
-    room.finalRound=nextStake<proposed && nextStake>0;
+    const maxAffordable=Math.min(room.players.EAST.money,room.players.WEST.money);
+    const nextStake=Math.min(proposed,maxAffordable);
+    room.finalRound=nextStake<proposed;
     room.stake=nextStake;
     const eastBroke = room.players.EAST.money <= 0;
     const westBroke = room.players.WEST.money <= 0;
@@ -990,8 +1045,12 @@ io.on('connection', socket=>{
     const seat=playerSeat(room,socket.id); if(!seat || room.phase!=='SETUP')return;
     const p=room.players[seat]; if(p.character!=='KAIJI' || p.setupConfirmed)return;
     const clean=[...new Set((Array.isArray(tiles)?tiles:[]).map(Number).filter(t=>Number.isInteger(t)&&t>=0&&t<34))];
-    // Allow 0~2 while the user is toggling tiles. The old exact-2 validation
-    // made deselection impossible: [A,B] -> [B] and [B] -> [] were rejected.
+    // Allow 0~2 while toggling. If the already-confirmed 13-tile hand is
+    // known to be ineligible, the ability cannot be selected at all.
+    if(p.hand13?.length===13 && !kaijiAbilityEligible(room,seat,p.hand13)) {
+      p.kaijiAbilityEligible=false; p.specialRonTiles=[];
+      return emitRoom(room);
+    }
     const waits=new Set(p.hand13?.length===13 ? getWaits(p.hand13) : []);
     const invalid=clean.filter(t=>waits.has(t));
     if(invalid.length) return socket.emit('error_message','현재 대기패는 특수 론패로 선택할 수 없습니다.');
@@ -1081,7 +1140,7 @@ io.on('connection', socket=>{
     room.phase='WAITING'; room.roundNumber=1; room.stake=room.startingStake||1000000; room.finalRound=false; room.uraDoraIndicator=null; room.doraIndicator=null;
     room.charactersLocked=false; room.nextReady={EAST:false,WEST:false}; room.setupUnlock={EAST:false,WEST:false}; room.startReady={EAST:false,WEST:false}; room.showdownEndsAt=null; room.startReady={EAST:false,WEST:false}; room.showdownEndsAt=null;
     for(const p of [room.players.EAST,room.players.WEST]) if(p){
-      p.money=room.startingMoney; p.character=null; p.specialRonTiles=[]; p.akagiSuit=null; p.abilityReady=false; p.murauokaReveal=[];
+      p.money=room.startingMoney; p.character=null; p.specialRonTiles=[]; p.akagiSuit=null; p.abilityReady=false; p.kaijiAbilityEligible=false; p.murauokaReveal=[];
       p.setupConfirmed=false; p.hand13=[]; p.discardCandidates=[]; p.discardedTiles=[]; p.discardCount=0; p.waits=[]; p.furiten=false; p.temporaryFuriten=false;
     }
     socket.emit('restart_done');

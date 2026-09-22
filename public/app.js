@@ -245,13 +245,17 @@ function renderAbilityPanel(s){
   if(ch==='KAIJI'){
     if(!localKaijiTiles.length && s.me.specialRonTiles?.length) localKaijiTiles=[...s.me.specialRonTiles];
     const waits=new Set(localCurrentWaits());
-    const ready=localKaijiTiles.length===2 && localKaijiTiles.every(t=>!waits.has(t));
-    box.innerHTML=`<div class="ability-title">${s.me.characterName} · 특수 론</div><p>현재 대기패를 제외한 패 중 2장을 골라, 상대가 그 패를 버리면 반드시 특수 론할 수 있습니다.</p><div class="ability-selected">선택: ${localKaijiTiles.map(tileLabel).join(' · ')||'없음'} <b>${ready?'준비 완료':'2장 선택 필요'}</b></div><div id="kaijiTilePicker" class="ability-tile-picker"></div>`;
-    const picker=$('kaijiTilePicker');
+    const manganEligible=localSelected.length===13 && setupPreview.some(x=>x.allowed);
+    const eligible=localSelected.length===13 ? manganEligible : !!s.me.abilityEligible;
+    const ready=eligible && localKaijiTiles.length===2 && localKaijiTiles.every(t=>!waits.has(t));
+    const reason=eligible?'만관 이상 텐파이 · 특수능력 사용 가능':'노텐 또는 만관 이상 텐파이 아님 · 특수능력 사용 불가';
+    box.innerHTML=`<div class="ability-title">${s.me.characterName} · 특수 론</div><p>만관 이상 텐파이일 때만 사용할 수 있습니다. 대기패가 아닌 패 2장을 골라 특수 론패로 지정합니다.</p><div class="ability-selected"><span>선택: ${localKaijiTiles.map(tileLabel).join(' · ')||'없음'}</span><b>${eligible?(ready?'준비 완료':'2장 선택 필요'):reason}</b></div><div class="ability-tile-picker"></div>`;
+    const picker=box.querySelector('.ability-tile-picker');
     for(let t=0;t<34;t++){
-      const el=renderTile(t,'tile ability-tile'+(localKaijiTiles.includes(t)?' selected':'')+(waits.has(t)?' disabled':'') );
-      el.title=waits.has(t)?`${tileLabel(t)} · 현재 대기패라 선택 불가`:tileLabel(t);
+      const el=renderTile(t,'tile ability-tile'+(localKaijiTiles.includes(t)?' selected':'')+(waits.has(t)||!eligible?' disabled':''));
+      el.title=!eligible?reason:(waits.has(t)?`${tileLabel(t)} · 현재 대기패라 선택 불가`:tileLabel(t));
       el.onclick=()=>{
+        if(!eligible)return toast(reason);
         if(waits.has(t))return toast('현재 대기패는 특수 론패로 지정할 수 없습니다.');
         if(localKaijiTiles.includes(t)){localKaijiTiles=localKaijiTiles.filter(x=>x!==t);}
         else {if(localKaijiTiles.length>=2)return toast('특수 론패는 2장까지입니다.');localKaijiTiles.push(t);}
@@ -261,12 +265,12 @@ function renderAbilityPanel(s){
     }
   } else if(ch==='MURAOKA'){
     const rows=(s.me.murauokaReveal||[]).map(x=>waitTileMarkup(x.tile,x.count)).join('');
-    box.innerHTML=`<div class="ability-title">${s.me.characterName} · 패산 간파</div><p>상대 패산에서 무작위로 뽑힌 10장의 종류와 매수만 알 수 있습니다. 텐파이 여부는 알 수 없습니다.</p><div class="revealed-count">공개된 10장 <span>${rows||'표시 준비 중'}</span></div>`;
+    box.innerHTML=`<div class="ability-title">${s.me.characterName} · 패산 간파</div><p>상대 패산 34장 중 랜덤으로 10종류를 확인하고, 그 10종의 보유 매수를 보여줍니다.</p><div class="revealed-count">공개된 10장 <span>${rows||'표시 준비 중'}</span></div>`;
   } else if(ch==='WASHIZU'){
-    box.innerHTML=`<div class="ability-title">${s.me.characterName} · 위압감</div><p>상대는 자신의 <b>9번째 타패까지</b> 요구패(1·9·자패)를 버릴 수 없습니다.</p><div class="ability-ready">특수능력 자동 적용</div>`;
+    box.innerHTML=`<div class="ability-title">${s.me.characterName} · 위압감</div><p>상대는 <b>9순 이전</b>까지 요구패(1·9·자패)를 버릴 수 없습니다. 단, 버릴 수 있는 패가 요구패뿐이면 예외입니다.</p><div class="ability-ready">특수능력 자동 적용</div>`;
   } else if(ch==='AKAGI'){
     const suitNames={m:'만수',p:'통수',s:'삭수'};
-    box.innerHTML=`<div class="ability-title">${s.me.characterName} · 절일문</div><p>만수·통수·삭수 중 하나를 골라 상대가 그 수패를 버릴 수 없게 합니다. 단, 그 수패만 남으면 버릴 수 있습니다.</p><div class="suit-picker">${Object.entries(suitNames).map(([k,v])=>`<button class="suit-btn ${s.me.akagiSuit===k?'selected':''}" data-suit="${k}">${v}</button>`).join('')}</div><div class="ability-ready">${s.me.akagiSuit?suitNames[s.me.akagiSuit]+' 금지 적용':'수패를 선택하세요.'}</div>`;
+    box.innerHTML=`<div class="ability-title">${s.me.characterName} · 절일문</div><p>만수·통수·삭수 중 하나를 골라 상대가 그 수패를 버릴 수 없게 합니다. <b>14순부터는 절일문이어도 해당 패를 버릴 수 있습니다.</b></p><div class="suit-picker">${Object.entries(suitNames).map(([k,v])=>`<button class="suit-btn ${s.me.akagiSuit===k?'selected':''}" data-suit="${k}">${v}</button>`).join('')}</div><div class="ability-ready">${s.me.akagiSuit?suitNames[s.me.akagiSuit]+' 금지 적용':'수패를 선택하세요.'}</div>`;
     box.querySelectorAll('.suit-btn').forEach(btn=>btn.onclick=()=>socket.emit('set_akagi_suit',{suit:btn.dataset.suit}));
   }
   // 13장 선택 완료는 캐릭터 능력 설정과 독립적이다.
@@ -449,7 +453,12 @@ function renderGame(s){
   if(skillBox){
     if(s.gameMode==='CHARACTER' && s.me.character==='KAIJI'){
       skillBox.classList.remove('hidden');
-      skillBox.innerHTML='<b>카이지 특수 론패</b><div class="skill-tile-row">'+(s.me.specialRonTiles||[]).map(t=>tileImageMarkup(t)).join('')+'</div>';
+      const tiles=(s.me.specialRonTiles||[]).map(t=>tileImageMarkup(t)).join('');
+      skillBox.innerHTML=`<b>카이지 특수 론패</b><span class="skill-status">${s.me.abilityEligible?'사용 가능':'사용 불가'}</span><div class="skill-tile-row">${tiles||'<span class="skill-empty">지정된 특수 론패 없음</span>'}</div>`;
+    } else if(s.gameMode==='CHARACTER' && s.me.character==='MURAOKA'){
+      skillBox.classList.remove('hidden');
+      const rows=(s.me.murauokaReveal||[]).map(x=>waitTileMarkup(x.tile,x.count)).join('');
+      skillBox.innerHTML=`<b>무라오카 · 상대 패산 투시</b><span class="skill-status">10종류 확인</span><div class="skill-tile-row muraoka-skill-row">${rows||'<span class="skill-empty">공개 정보 없음</span>'}</div>`;
     } else skillBox.classList.add('hidden');
   }
   const ld=$('lastDiscard'); if(s.lastDiscard!=null){ld.classList.remove('hidden');setTileContent(ld,s.lastDiscard,'tile last-discard-tile')} else {ld.classList.add('hidden');ld.innerHTML=''}
