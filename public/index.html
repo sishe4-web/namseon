@@ -1,0 +1,110 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>17步 Online</title>
+  <link rel="stylesheet" href="/styles.css" />
+</head>
+<body>
+  <main id="app">
+    <section id="home" class="screen active">
+      <div class="hero">
+        <div class="eyebrow">1 : 1 RIICHI MAHJONG VARIANT</div>
+        <h1>17步</h1>
+        <p>친구와 방을 만들어 즐기는 온라인 지뢰 게임</p>
+        <div class="form-card">
+          <input id="nickname" maxlength="20" placeholder="닉네임" value="Player" />
+          <input id="stake" type="number" min="1" step="1000" value="1000000" placeholder="판돈" />
+          <div class="row">
+            <button id="createBtn" class="primary">방 만들기</button>
+            <button id="joinBtn">방 참가하기</button>
+          </div>
+          <div class="join-row">
+            <input id="joinCode" maxlength="6" placeholder="방 코드" />
+          </div>
+        </div>
+        <div class="rules-mini">3분 패 구성 · 13장 텐파이 · 17장 타패 · 만관 이상만 화료 · 유국 시 판돈 2배</div>
+      </div>
+    </section>
+
+    <section id="lobby" class="screen">
+      <div class="topbar"><div class="logo">17步</div><div class="room-pill">ROOM <span id="roomCodeLobby"></span></div></div>
+      <div class="lobby-card">
+        <h2>대기실</h2>
+        <p id="lobbyNotice">친구에게 방 코드를 보내세요.</p>
+        <div class="room-code-big" id="bigRoomCode">------</div>
+        <button id="copyRoomBtn">코드 복사</button>
+        <div class="players-lobby">
+          <div class="slot"><span>東 · 선</span><strong id="eastName">-</strong><em>READY</em></div>
+          <div class="slot"><span>西 · 자</span><strong id="westName">-</strong><em id="westStatus">WAITING</em></div>
+        </div>
+      </div>
+    </section>
+
+    <section id="dora" class="screen">
+      <div class="topbar"><div class="logo">17步</div><div id="doraRoom" class="muted"></div></div>
+      <div class="dora-card">
+        <div class="eyebrow">도라표시패 선택</div>
+        <h2>선이 남은 패산에서 1장을 선택합니다</h2>
+        <p>선택한 위치의 패가 도라표시패가 되고, 그 아래 패는 우라도라표시패가 됩니다.</p>
+        <div id="doraPool" class="dora-pool"></div>
+        <div id="doraWait" class="muted hidden">선의 선택을 기다리는 중...</div>
+      </div>
+    </section>
+
+    <section id="setup" class="screen game-screen">
+      <div class="topbar game-top"><div class="logo">17步</div><div class="stake">판돈 <b id="stakeSetup">-</b></div><div class="timer" id="setupTimer">03:00</div></div>
+      <div class="setup-layout">
+        <div class="setup-main panel">
+          <div class="section-head"><h2>내 34장 패산</h2><div>도라 <span id="setupDora" class="tile-mini"></span></div></div>
+          <div id="privateWall" class="tile-grid"></div>
+          <div class="selected-area">
+            <div class="section-head"><h3>선택한 13장 <span id="selectedCount">0</span>/13</h3><span id="tenpaiStatus" class="status-chip neutral">판정 전</span></div>
+            <div id="selectedHand" class="tile-row large"></div>
+            <div id="waits" class="waits"></div>
+          </div>
+          <button id="confirmHandBtn" class="primary wide">13장 확정</button>
+        </div>
+        <aside class="setup-side panel">
+          <h3>준비 규칙</h3>
+          <p>34장 중 13장을 골라 손패를 만듭니다.</p>
+          <p>3분 안에 확정하지 않으면 현재 선택을 보존하고 부족한 패는 자동 보충합니다. 상태는 노텐리치로 기록됩니다.</p>
+          <div class="dora-box"><span>도라표시패</span><span id="setupDoraBig"></span></div>
+        </aside>
+      </div>
+    </section>
+
+    <section id="game" class="screen game-screen">
+      <div class="topbar game-top"><div class="logo">17步</div><div id="roomInGame" class="muted"></div><div class="stake">판돈 <b id="stakeGame">-</b></div><div class="turn-ind" id="turnIndicator">-</div></div>
+      <div class="table">
+        <div class="opponent panel">
+          <div class="player-head"><div><strong id="opponentName">상대</strong><span id="opponentSeat">西</span></div><div><span id="opponentRiichi" class="badge">-</span><span id="opponentCount">0/17</span></div></div>
+          <div id="opponentDiscards" class="discard-grid"></div>
+        </div>
+        <div class="center-area">
+          <div class="dora-center"><span>도라</span><span id="doraGame"></span></div>
+          <div id="lastDiscard" class="last-discard hidden"></div>
+          <div id="resultOverlay" class="result-overlay hidden"></div>
+        </div>
+        <div class="self panel">
+          <div class="candidate-head"><span>내 타패 후보</span><span id="candidateCount">21</span></div>
+          <div id="candidates" class="candidate-row"></div>
+          <div class="hand-label">내 패 · <span id="mySeat">東</span></div>
+          <div id="myHand" class="tile-row large"></div>
+          <div class="action-row"><button id="ronBtn" class="ron" disabled>RON</button><button id="passRonBtn" class="ghost">패스</button></div>
+          <div class="self-status"><span id="myRiichi"></span><span id="myTenpai"></span><span id="myFuriten"></span><span id="discardProgress">0/17</span></div>
+        </div>
+      </div>
+    </section>
+
+    <section id="result" class="screen">
+      <div class="result-card panel"><div id="resultTitle" class="eyebrow">GAME RESULT</div><h1 id="resultMain">-</h1><div id="resultDetail"></div><div id="yakuList" class="yaku-list"></div><div class="result-actions"><button id="nextRoundBtn" class="primary">다음 판</button></div></div>
+    </section>
+
+    <div id="toast" class="toast"></div>
+  </main>
+  <script src="/socket.io/socket.io.js"></script>
+  <script src="/app.js"></script>
+</body>
+</html>
