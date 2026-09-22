@@ -75,6 +75,7 @@ function startSetup(s){
   const container=$('privateWall'); container.innerHTML='';
   wall.forEach((t,wallIndex)=>{
     const el=renderTile(t);
+    el.dataset.wallIndex=wallIndex;
     if(localSelected.some(x=>x.wallIndex===wallIndex)) el.classList.add('selected');
     el.onclick=()=>toggleSelection(t,wallIndex,el);
     container.appendChild(el);
@@ -96,8 +97,24 @@ function toggleSelection(t,wallIndex,el){
 }
 function renderSelected(){
   $('selectedCount').textContent=localSelected.length;
+  $('selectedHand').title='선택한 패를 클릭하면 선택이 취소됩니다.';
   const box=$('selectedHand'); box.innerHTML='';
-  localSelected.forEach(x=>box.appendChild(renderTile(x.tile,'tile selected')));
+  // Show the chosen 13 in the same canonical order as the tile wall.
+  [...localSelected].sort((a,b)=>a.tile-b.tile || a.wallIndex-b.wallIndex).forEach(x=>{
+    const el=renderTile(x.tile,'tile selected');
+    el.dataset.wallIndex=x.wallIndex;
+    el.title=`${tileLabel(x.tile)} · 클릭해서 선택 취소`;
+    el.onclick=()=>{
+      if(state?.me?.setupConfirmed) return;
+      const idx=localSelected.findIndex(v=>v.wallIndex===x.wallIndex);
+      if(idx<0) return;
+      localSelected.splice(idx,1);
+      const wallEl=document.querySelector(`#privateWall .tile[data-wall-index=\"${x.wallIndex}\"]`);
+      if(wallEl) wallEl.classList.remove('selected');
+      renderSelected();
+    };
+    box.appendChild(el);
+  });
   const counts=Array(34).fill(0); localSelected.forEach(x=>counts[x.tile]++);
   const waits=[]; if(localSelected.length===13){for(let t=0;t<34;t++){if(counts[t]>=4)continue;counts[t]++;if(isAgariLocal(counts))waits.push(t);counts[t]--;}}
   $('waits').textContent=waits.length?`대기: ${waits.map(tileLabel).join(' · ')}`:'대기패를 계산할 수 없습니다.';
@@ -140,7 +157,7 @@ socket.on('state',s=>{
   const previousPhase=lastPhase;
   state=s;
   if(s.phase==='WAITING'){renderLobby(s);show('lobby');}
-  else if(s.phase==='DORA_SELECT') {show('dora');$('doraRoom').textContent='ROOM '+s.code; const isEast=s.me?.seat==='EAST';$('doraWait').classList.toggle('hidden',isEast);}
+  else if(s.phase==='DORA_SELECT') {show('dora');$('doraRoom').textContent='ROOM '+s.code; const isDealer=s.dealer===s.me?.seat;$('doraWait').classList.toggle('hidden',isDealer);}
   else if(s.phase==='SETUP') startSetup(s);
   else if(s.phase==='PLAYING') renderGame(s);
   else if(s.phase==='RESULT'||s.phase==='DRAW') renderResult(s);
