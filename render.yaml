@@ -1,0 +1,10 @@
+services:
+  - type: web
+    name: 17bo-online
+    env: node
+    buildCommand: npm ci
+    startCommand: npm start
+    healthCheckPath: /
+    envVars:
+      - key: NODE_ENV
+        value: production
