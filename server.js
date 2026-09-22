@@ -266,11 +266,13 @@ function calcYakuForDecomp(decomp, counts, winTile, seat, context) {
   if (suitsPresent.size===1 && honor) y.push(['混一色',3]);
   else if (suitsPresent.size===1 && !honor) y.push(['清一色',6]);
 
-  const allGroupsTerminalHonor = decomp.every(g=>groupsContainTerminalHonor(g));
-  const allGroupsTerminal = decomp.every(g=>g.tiles.every(isTerminal));
+  const allGroupsHaveTerminal = decomp.every(g=>g.tiles.some(isTerminal));
+  const allGroupsHaveTerminalOrHonor = decomp.every(g=>g.tiles.some(isTerminalOrHonor));
   const hasSeq=allSeq.length>0;
-  if (allGroupsTerminal && hasSeq && !honor) y.push(['純全帯么九',3]);
-  else if (allGroupsTerminalHonor && hasSeq) y.push(['混全帯么九',2]);
+  // Junchan: every group/pair contains a terminal, no honors, and at least one sequence.
+  // Chanta: every group/pair contains a terminal or honor, with at least one sequence.
+  if (allGroupsHaveTerminal && hasSeq && !honor) y.push(['純全帯么九',3]);
+  else if (allGroupsHaveTerminalOrHonor && hasSeq) y.push(['混全帯么九',2]);
   if (!hasSeq && counts.every((n,t)=>n===0||isTerminalOrHonor(t))) y.push(['混老頭',2]);
   if (!hasSeq) y.push(['対々和',2]);
 
@@ -488,9 +490,17 @@ function emitRoom(room) {
       const p=room.players[seat];
       const wait = p.waits.includes(room.lastDiscard);
       const permanent = p.furiten;
-      const evalResult = wait && !permanent && !p.temporaryFuriten ? evaluateRon(room,seat,room.lastDiscard,oppSeat):{allowed:false,reason:permanent?'후리텐':'일시 후리텐'};
+      let evalResult = {allowed:false,reason:permanent?'후리텐':'일시 후리텐'};
+      if(wait && !permanent && !p.temporaryFuriten) evalResult=evaluateRon(room,seat,room.lastDiscard,oppSeat);
+      // In this no-draw variant, if a winning tile is discarded but the hand is
+      // only a yasume (below mangan), the player necessarily passes on it.
+      // Treat that missed ron as minogashi/temporary furiten for the rest of the hand.
+      if(wait && !permanent && !p.temporaryFuriten && !evalResult.allowed && evalResult.reason==='만관 조건 미달') {
+        p.temporaryFuriten=true;
+        evalResult={allowed:false,reason:'미노가시 후리텐'};
+      }
       payload.canRon=!!evalResult.allowed;
-      payload.ronReason=evalResult.reason ? (evalResult.allowed ? evalResult.reason : (evalResult.reason==='만관 조건 미달' ? `${evalResult.reason} · 패스하면 일시 후리텐` : evalResult.reason)) : null;
+      payload.ronReason=evalResult.reason ? (evalResult.allowed ? evalResult.reason : evalResult.reason) : null;
       payload.ronInfo=evalResult.allowed?evalResult:null;
     }
     io.to(s).emit('state',payload);
@@ -597,7 +607,8 @@ function discard(room, seat, tile) {
   room.lastDiscard=tile;
   room.lastDiscardBy=seat;
   room.turn=otherSeat(seat);
-  p.temporaryFuriten=false;
+  // 미노가시 후리텐은 이 변형에서는 패가 자동으로 들어오는 드로우가 없으므로
+  // 자신의 다음 타패로 해제하지 않고 해당 국 끝까지 유지한다.
   // Ippatsu ends when that player makes their first discard.
   p.ippatsu=false;
   updateFuriten(p);
@@ -605,6 +616,12 @@ function discard(room, seat, tile) {
   // receive the same discardedTiles / lastDiscard / lastDiscardBy / turn snapshot.
   emitRoom(room);
   return {ok:true};
+}
+
+function resultHandView(player, winningTile=null) {
+  const hand = sortTiles(player.hand13 || []);
+  const waits = (player.waits || []).slice().sort((a,b)=>a-b);
+  return { hand13: hand, winningTile, waits, tenpai: !!player.isTenpai };
 }
 
 function doRon(room, winnerSeat) {
@@ -618,14 +635,17 @@ function doRon(room, winnerSeat) {
   if(p.temporaryFuriten)return {ok:false,reason:'일시 후리텐입니다.'};
   const evaluated=evaluateRon(room,winnerSeat,tile,discarder);
   if(!evaluated.allowed)return {ok:false,reason:evaluated.reason};
-  room.phase='RESULT'; room.winner=winnerSeat;
+  room.phase='RESULT'; room.winner=winnerSeat; room.resultEndsAt=Date.now()+10000;
   const payment=room.stake*evaluated.classification.payout;
   room.players[winnerSeat].money += payment;
   room.players[discarder].money -= payment;
   room.result={
     type:'RON',winner:winnerSeat,loser:discarder,tile,han:evaluated.han,fu:evaluated.fu,
     yaku:evaluated.yaku,classification:evaluated.classification.label,payment,
-    baseHan:evaluated.baseHan,dora:evaluated.dora,ura:evaluated.ura
+    baseHan:evaluated.baseHan,dora:evaluated.dora,ura:evaluated.ura,
+    resultEndsAt:room.resultEndsAt,
+    winnerHand:resultHandView(p, tile),
+    loserHand:resultHandView(room.players[discarder], null)
   };
   p.ippatsu=false; room.players[discarder].ippatsu=false;
   emitRoom(room);
@@ -636,11 +656,13 @@ function doDraw(room) {
   if(room.phase!=='PLAYING') return;
   if(room.players.EAST.discardCount>=DRAW_LIMIT && room.players.WEST.discardCount>=DRAW_LIMIT) {
     room.phase='DRAW';
+    room.resultEndsAt=Date.now()+10000;
     const drawStake=room.stake;
     room.players.EAST.money -= drawStake;
     room.players.WEST.money -= drawStake;
     room.stake*=2;
-    room.result={type:'DRAW',message:'17장씩 타패했지만 화료가 없어 유국',nextStake:room.stake};
+    room.result={type:'DRAW',message:'17장씩 타패했지만 화료가 없어 유국',nextStake:room.stake,resultEndsAt:room.resultEndsAt,
+      east:resultHandView(room.players.EAST), west:resultHandView(room.players.WEST)};
     emitRoom(room);
   }
 }
@@ -716,6 +738,9 @@ io.on('connection', socket=>{
   socket.on('next_round',()=>{
     const room=rooms.get(socket.data.roomCode); if(!room)return;
     if(room.phase!=='RESULT' && room.phase!=='DRAW')return;
+    if(room.resultEndsAt && Date.now()<room.resultEndsAt) {
+      return socket.emit('error_message',`결과를 확인하세요. ${Math.ceil((room.resultEndsAt-Date.now())/1000)}초 후 다음 판을 시작할 수 있습니다.`);
+    }
     room.roundNumber++;
     // Seats/roles swap every game: the previous WEST becomes EAST (dealer) and vice versa.
     const oldEast=room.players.EAST;

@@ -4,6 +4,7 @@ let localSelected = []; // [{tile, wallIndex}] - physical tile instances, not ju
 let lastPhase = null;
 let setupTimerHandle = null;
 let setupPreview = [];
+let resultTimerHandle = null;
 
 const $ = id => document.getElementById(id);
 const screens = [...document.querySelectorAll('.screen')];
@@ -227,17 +228,46 @@ function renderGame(s){
   const ron=$('ronBtn');ron.disabled=!s.canRon;ron.title=s.ronReason||'';
 }
 
+function renderResultHand(title, view, winningTile=null){
+  if(!view) return '';
+  const hand=[...(view.hand13||[])];
+  const tiles=hand.map((t)=>`<span class=\"result-hand-tile\">${tileImageMarkup(t)}</span>`).join('');
+  const win=winningTile!=null ? `<span class=\"result-win-plus\">＋</span><span class=\"result-hand-tile result-winning-tile\">${tileImageMarkup(winningTile)}</span>` : '';
+  const waits=(view.waits||[]).map(t=>`<span class=\"result-wait-tile\">${tileImageMarkup(t)}</span>`).join('');
+  return `<div class=\"result-hand-block\"><div class=\"result-hand-title\">${title}</div><div class=\"result-hand-row\">${tiles}${win}</div><div class=\"result-waits-label\">${view.tenpai?'텐파이 · 대기패':'노텐'} ${waits?`<span class=\"result-waits\">${waits}</span>`:''}</div></div>`;
+}
+function tileImageMarkup(t){
+  return `<img src=\"/assets/tiles/${t}.png\" alt=\"${tileLabel(t)}\" onerror=\"this.style.display='none'\">`;
+}
+function startResultCountdown(endAt){
+  clearInterval(resultTimerHandle);
+  const tick=()=>{
+    const ms=Math.max(0,(endAt||0)-Date.now());
+    const sec=Math.ceil(ms/1000);
+    $('resultCountdown').textContent=sec>0?`다음 판까지 ${sec}초 · 결과를 확인하세요`:'다음 판을 시작할 수 있습니다.';
+    $('nextRoundBtn').disabled=sec>0;
+    if(ms<=0){clearInterval(resultTimerHandle);resultTimerHandle=null;}
+  };
+  tick();
+  resultTimerHandle=setInterval(tick,250);
+}
+
 function renderResult(s){
   show('result'); const r=s.result;
+  startResultCountdown(r?.resultEndsAt||Date.now());
   $('resultMain').textContent=r?.type==='RON'?classKo(r.classification):'유국';
   $('resultMain').className='result-rank '+rarityClass($('resultMain').textContent);
+  const handBox=$('resultHandView');
   if(r?.type==='RON'){
     const winnerName=r.winner===s.me.seat?s.me.nickname:(s.opponent?.nickname||'상대');
     const loserName=r.loser===s.me.seat?s.me.nickname:(s.opponent?.nickname||'상대');
-    $('resultDetail').innerHTML=`<div class="result-burst"><b>${r.winner===s.me.seat?'승리':'패배'}</b></div><div>${winnerName} 승 · ${loserName} 패</div><div class="payment-line">${loserName} → ${winnerName} <b>${money(r.payment)}</b></div><div>${r.han}판 ${r.fu? r.fu+'부':''}</div><div>기본 ${r.baseHan}판 · 도라 ${r.dora} · 우라도라 ${r.ura}</div>`;
+    $('resultDetail').innerHTML=`<div class=\"result-burst\"><b>${r.winner===s.me.seat?'승리':'패배'}</b></div><div>${winnerName} 승 · ${loserName} 패</div><div class=\"payment-line\">${loserName} → ${winnerName} <b>${money(r.payment)}</b></div><div>${r.han}판 ${r.fu? r.fu+'부':''}</div><div>기본 ${r.baseHan}판 · 도라 ${r.dora} · 우라도라 ${r.ura}</div>`;
+    handBox.innerHTML=renderResultHand(`${winnerName}의 화료 형태 · 론패 포함`,r.winnerHand,r.tile);
     const yl=$('yakuList');yl.innerHTML='';(r.yaku||[]).forEach(y=>{const x=document.createElement('div');x.className='yaku '+yakuRarity(Number(y[1])||0);x.innerHTML=`<b>${yakuKo(y[0])}</b><span>${y[1]}판</span>`;yl.appendChild(x)});
   } else {
-    $('resultDetail').innerHTML=`<div>양쪽 모두 17장까지 타패했습니다.</div><div>각자 현재 판돈 <b>${money(r.nextStake/2)}</b>를 내고 다음 판 판돈이 <b>${money(r.nextStake)}</b>로 올라갑니다.</div><div class="money-result"><span>내 보유금 ${money(s.me.money)}</span><span>상대 보유금 ${money(s.opponent?.money)}</span></div>`;
+    $('resultDetail').innerHTML=`<div>양쪽 모두 17장까지 타패했습니다.</div><div>서로의 텐파이와 대기패를 확인하세요.</div><div>각자 현재 판돈 <b>${money(r.nextStake/2)}</b>를 내고 다음 판 판돈이 <b>${money(r.nextStake)}</b>로 올라갑니다.</div><div class=\"money-result\"><span>내 보유금 ${money(s.me.money)}</span><span>상대 보유금 ${money(s.opponent?.money)}</span></div>`;
+    const myView=s.me.seat==='EAST'?r.east:r.west; const oppView=s.me.seat==='EAST'?r.west:r.east;
+    handBox.innerHTML=renderResultHand(`${s.me.nickname} · ${myView?.tenpai?'텐파이':'노텐'}`,myView)+renderResultHand(`${s.opponent?.nickname||'상대'} · ${oppView?.tenpai?'텐파이':'노텐'}`,oppView);
     $('yakuList').innerHTML='';
   }
 }
