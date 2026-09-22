@@ -466,10 +466,9 @@ function lockSetup(room, seat, hand13, forced=false) {
   const p=room.players[seat];
   if(room.phase!=='SETUP' || p.setupConfirmed) return;
   const counts=countsFromTiles(p.private34Tiles);
-  const selected=[];
-  const selectedCounts=Array(34).fill(0);
+  const selected=[]; const used=new Set();
   for(const t of Array.isArray(hand13)?hand13:[]) {
-    if(t>=0&&t<34 && selectedCounts[t]<counts[t] && selected.length<13) { selected.push(t); selectedCounts[t]++; }
+    if(t>=0&&t<34&&!used.has(t) && selected.filter(x=>x===t).length<counts[t]) { selected.push(t); used.add(`${t}:${selected.filter(x=>x===t).length}`); }
   }
   // The browser sends the exact 13 tile list. Preserve it; fill if timed out.
   const haveCounts=countsFromTiles(selected);

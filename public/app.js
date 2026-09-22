@@ -1,8 +1,106 @@
-const socket=io();let state=null,selected=[];const $=id=>document.getElementById(id);const names=['1萬','2萬','3萬','4萬','5萬','6萬','7萬','8萬','9萬','1筒','2筒','3筒','4筒','5筒','6筒','7筒','8筒','9筒','1索','2索','3索','4索','5索','6索','7索','8索','9索','東','南','西','北','白','發','中'];
-const show=id=>document.querySelectorAll('.screen').forEach(x=>x.classList.toggle('active',x.id===id));const tile=t=>{const e=document.createElement('div');e.className='tile';e.textContent=names[t]||'?';return e};const say=t=>{const e=$('toast');e.textContent=t;e.classList.add('show');setTimeout(()=>e.classList.remove('show'),2200)};
-$('createBtn').onclick=()=>socket.emit('create_room',{nickname:$('nickname').value||'Player 1',stake:Number($('stake').value)||1000000});$('joinBtn').onclick=()=>socket.emit('join_room',{nickname:$('nickname').value||'Player 2',code:$('joinCode').value.trim()});$('copyRoomBtn').onclick=()=>navigator.clipboard.writeText($('bigRoomCode').textContent).then(()=>say('방 코드를 복사했습니다.'));$('confirmHandBtn').onclick=()=>{if(selected.length!==13)return say('13장을 선택하세요.');socket.emit('confirm_hand',{tiles:selected.map(i=>state.me.private34Tiles[i])})};$('ronBtn').onclick=()=>socket.emit('declare_ron');$('passRonBtn').onclick=()=>socket.emit('pass_ron');$('nextRoundBtn').onclick=()=>socket.emit('next_round');
-function lobby(s){$('roomCodeLobby').textContent=s.code;$('bigRoomCode').textContent=s.code;$('eastName').textContent=s.me.seat==='EAST'?s.me.nickname:(s.opponent?.nickname||'-');$('westName').textContent=s.me.seat==='WEST'?s.me.nickname:(s.opponent?.nickname||'-');$('westStatus').textContent=s.opponent?'READY':'WAITING';show('lobby')}
-function setup(s){$('stakeSetup').textContent=Number(s.stake).toLocaleString()+'원';$('setupDora').textContent=names[s.doraIndicator];$('setupDoraBig').textContent=names[s.doraIndicator];$('privateWall').innerHTML='';s.me.private34Tiles.forEach((t,i)=>{const e=tile(t);if(selected.includes(i))e.classList.add('selected');e.onclick=()=>{if(s.me.setupConfirmed)return;if(selected.includes(i))selected=selected.filter(x=>x!==i);else if(selected.length<13)selected.push(i);setup(s)};$('privateWall').append(e)});$('selectedCount').textContent=selected.length;$('selectedHand').innerHTML='';selected.forEach(i=>$('selectedHand').append(tile(s.me.private34Tiles[i])));$('waits').textContent=selected.length===13?'13장을 골랐습니다.':'13장을 선택하세요.';$('tenpaiStatus').textContent=selected.length===13?'준비 완료':'판정 전';const n=Math.max(0,Math.ceil((s.setupEndsAt-Date.now())/1000));$('setupTimer').textContent=String(n/60|0).padStart(2,'0')+':'+String(n%60).padStart(2,'0');show('setup')}
-function game(s){$('roomInGame').textContent='ROOM '+s.code;$('stakeGame').textContent=Number(s.stake).toLocaleString()+'원';$('mySeat').textContent=s.me.seat==='EAST'?'東':'西';$('opponentName').textContent=s.opponent?.nickname||'상대';$('opponentSeat').textContent=s.opponent?.seat==='EAST'?'東':'西';$('opponentCount').textContent=(s.opponent?.discardCount||0)+'/17';$('doraGame').textContent=names[s.doraIndicator];$('myRiichi').textContent=s.me.isRiichi?'RIICHI':'NO RIICHI';$('myTenpai').textContent=s.me.isTenpai?'TENPAI':'NOTEN';$('discardProgress').textContent=s.me.discardCount+'/17';$('turnIndicator').textContent=s.turn===s.me.seat?'MY TURN':'OPPONENT TURN';$('opponentDiscards').innerHTML='';(s.opponent?.discardedTiles||[]).forEach(t=>$('opponentDiscards').append(tile(t)));$('candidates').innerHTML='';s.me.discardCandidates.forEach(t=>{const e=tile(t);e.onclick=()=>s.turn===s.me.seat?socket.emit('discard_tile',{tile:t}):say('상대 턴입니다.');$('candidates').append(e)});$('myHand').innerHTML='';s.me.hand13.forEach(t=>$('myHand').append(tile(t)));$('candidateCount').textContent=s.me.discardCandidates.length;$('lastDiscard').textContent=s.lastDiscard==null?'':names[s.lastDiscard];$('lastDiscard').classList.toggle('hidden',s.lastDiscard==null);$('ronBtn').disabled=!s.canRon;show('game')}
-function result(s){const r=s.result;$('resultMain').textContent=r.type==='RON'?r.classification:'DRAW';$('resultDetail').textContent=r.type==='RON'?(r.han+'판 '+r.fu+'부'):'17장씩 타패하여 유국입니다.';$('yakuList').innerHTML='';(r.yaku||[]).forEach(y=>{const e=document.createElement('div');e.className='yaku';e.textContent=y[0]+' '+y[1]+'판';$('yakuList').append(e)});show('result')}
-socket.on('room_created',x=>{ $('roomCodeLobby').textContent=x.code;$('bigRoomCode').textContent=x.code;show('lobby')});socket.on('notice',say);socket.on('error_message',say);socket.on('dora_pool',x=>{$('doraPool').innerHTML='';for(let i=0;i<x.poolSize;i++){const b=document.createElement('button');b.className='dora-back';b.textContent=i+1;b.onclick=()=>socket.emit('select_dora',{index:i});$('doraPool').append(b)}});socket.on('state',s=>{state=s;if(s.phase==='WAITING')lobby(s);else if(s.phase==='DORA_SELECT'){$('doraRoom').textContent='ROOM '+s.code;$('doraWait').classList.toggle('hidden',s.me.seat==='EAST');show('dora')}else if(s.phase==='SETUP')setup(s);else if(s.phase==='PLAYING')game(s);else result(s)});
+const socket = io();
+let state = null;
+let localSelected = [];
+let lastPhase = null;
+let setupTimerHandle = null;
+
+const $ = id => document.getElementById(id);
+const screens = [...document.querySelectorAll('.screen')];
+function show(screenId){screens.forEach(s=>s.classList.toggle('active',s.id===screenId)); window.scrollTo(0,0)}
+function money(n){return Number(n||0).toLocaleString('ko-KR')+'원'}
+function tileLabel(t){return ['1萬','2萬','3萬','4萬','5萬','6萬','7萬','8萬','9萬','1筒','2筒','3筒','4筒','5筒','6筒','7筒','8筒','9筒','1索','2索','3索','4索','5索','6索','7索','8索','9索','東','南','西','北','白','發','中'][t]}
+function renderTile(t, cls='tile'){const d=document.createElement('div'); d.className=cls; d.textContent=tileLabel(t); d.dataset.tile=t; return d}
+function toast(msg){const x=$('toast'); x.textContent=msg; x.classList.add('show'); setTimeout(()=>x.classList.remove('show'),2200)}
+
+$('createBtn').onclick=()=>socket.emit('create_room',{nickname:$('nickname').value.trim()||'Player 1',stake:Number($('stake').value)||1000000});
+$('joinBtn').onclick=()=>socket.emit('join_room',{nickname:$('nickname').value.trim()||'Player 2',code:$('joinCode').value.trim()});
+$('copyRoomBtn').onclick=async()=>{await navigator.clipboard?.writeText($('bigRoomCode').textContent); toast('방 코드를 복사했습니다.')};
+$('confirmHandBtn').onclick=()=>{
+  if(localSelected.length!==13){toast('13장을 선택하세요.');return}
+  socket.emit('confirm_hand',{tiles:localSelected});
+};
+$('ronBtn').onclick=()=>socket.emit('declare_ron');
+$('passRonBtn').onclick=()=>socket.emit('pass_ron');
+$('nextRoundBtn').onclick=()=>socket.emit('next_round');
+
+function renderLobby(s){
+  $('roomCodeLobby').textContent=s.code; $('bigRoomCode').textContent=s.code;
+  $('eastName').textContent=s.me?.seat==='EAST'?s.me?.nickname:(s.opponent?.seat==='EAST'?s.opponent?.nickname:'-');
+  $('westName').textContent=s.me?.seat==='WEST'?s.me?.nickname:(s.opponent?.seat==='WEST'?s.opponent?.nickname:'-');
+  $('westStatus').textContent=s.opponent?'READY':'WAITING';
+}
+function startSetup(s){
+  if (lastPhase !== 'SETUP' && !(s.me?.setupConfirmed)) localSelected=(s.me?.hand13||[]).slice();
+  $('stakeSetup').textContent=money(s.stake); $('setupDora').textContent=tileLabel(s.doraIndicator); $('setupDoraBig').textContent=tileLabel(s.doraIndicator);
+  const wall=s.me.private34Tiles||[]; const container=$('privateWall'); container.innerHTML='';
+  const chosenOccurrences={};
+  for (const t of localSelected) chosenOccurrences[t]=(chosenOccurrences[t]||0)+1;
+  const renderedOccurrences={};
+  wall.forEach(t=>{
+    renderedOccurrences[t]=(renderedOccurrences[t]||0)+1;
+    const el=renderTile(t);
+    if((renderedOccurrences[t]||0) <= (chosenOccurrences[t]||0)) el.classList.add('selected');
+    el.onclick=()=>toggleSelection(t,el,wall);
+    container.appendChild(el);
+  });
+  renderSelected(); updateSetupTimer(s.setupEndsAt); show('setup');
+}
+function toggleSelection(t,el,wall){
+  if(state?.me?.setupConfirmed) return;
+  const index=localSelected.indexOf(t);
+  if(index>=0){localSelected.splice(index,1); el.classList.remove('selected');}
+  else {if(localSelected.length>=13){toast('13장까지만 선택할 수 있습니다.');return} localSelected.push(t); el.classList.add('selected');}
+  renderSelected();
+}
+function renderSelected(){
+  $('selectedCount').textContent=localSelected.length;
+  const box=$('selectedHand'); box.innerHTML=''; localSelected.forEach(t=>box.appendChild(renderTile(t,'tile selected')));
+  const counts=Array(34).fill(0); localSelected.forEach(t=>counts[t]++);
+  const waits=[]; if(localSelected.length===13){for(let t=0;t<34;t++){if(counts[t]>=4)continue;counts[t]++;if(isAgariLocal(counts))waits.push(t);counts[t]--;}}
+  $('waits').textContent=waits.length?`대기: ${waits.map(tileLabel).join(' · ')}`:'대기패를 계산할 수 없습니다.';
+  const chip=$('tenpaiStatus'); chip.className='status-chip '+(waits.length?'good':'bad'); chip.textContent=localSelected.length===13?(waits.length?'텐파이':'노텐'):'판정 전';
+}
+function isChiitoiLocal(c){return c.filter(n=>n===2).length===7&&c.every(n=>n===0||n===2)}
+function isKokushiLocal(c){const yaos=[0,8,9,17,18,26,27,28,29,30,31,32,33];let p=false;for(const t of yaos){if(!c[t])return false;if(c[t]>=2)p=true}for(let t=0;t<34;t++)if(!yaos.includes(t)&&c[t])return false;return p}
+function isStdLocal(c){const a=c.slice();function rec(pos,pair,groups){while(pos<34&&!a[pos])pos++;if(pos===34)return pair&&groups===4;if(!pair&&a[pos]>=2){a[pos]-=2;if(rec(pos,true,groups))return true;a[pos]+=2}if(a[pos]>=3){a[pos]-=3;if(rec(pos,pair,groups+1))return true;a[pos]+=3}if(pos<27&&pos%9<=6&&a[pos+1]&&a[pos+2]){a[pos]--;a[pos+1]--;a[pos+2]--;if(rec(pos,pair,groups+1))return true;a[pos]++;a[pos+1]++;a[pos+2]++}return false}return rec(0,false,0)}
+function isAgariLocal(c){return isKokushiLocal(c)||isChiitoiLocal(c)||isStdLocal(c)}
+function updateSetupTimer(end){clearInterval(setupTimerHandle);const tick=()=>{const ms=Math.max(0,end-Date.now());const sec=Math.ceil(ms/1000);$('setupTimer').textContent=`${String(Math.floor(sec/60)).padStart(2,'0')}:${String(sec%60).padStart(2,'0')}`;if(ms<=0)clearInterval(setupTimerHandle)};tick();setupTimerHandle=setInterval(tick,250)}
+
+function renderGame(s){
+  show('game'); $('roomInGame').textContent='ROOM '+s.code; $('stakeGame').textContent=money(s.stake); $('mySeat').textContent=s.me.seat==='EAST'?'東':'西'; $('opponentName').textContent=s.opponent?.nickname||'상대'; $('opponentSeat').textContent=s.opponent?.seat==='EAST'?'東':'西'; $('opponentCount').textContent=`${s.opponent?.discardCount||0}/17`; $('doraGame').textContent=tileLabel(s.doraIndicator);
+  $('opponentRiichi').textContent=s.opponent?.isRiichi?'RIICHI':'-'; $('myRiichi').textContent=s.me.isRiichi?'RIICHI':'NO RIICHI'; $('myTenpai').textContent=s.me.isTenpai?'TENPAI':'NOTEN'; $('myFuriten').textContent=s.me.furiten?'FURITEN':''; $('discardProgress').textContent=`${s.me.discardCount}/17`;
+  $('turnIndicator').textContent=s.turn===s.me.seat?'MY TURN':'OPPONENT TURN';
+  const od=$('opponentDiscards'); od.innerHTML=''; (s.opponent?.discardedTiles||[]).forEach(t=>od.appendChild(renderTile(t)));
+  const cand=$('candidates');cand.innerHTML='';(s.me.discardCandidates||[]).forEach(t=>{const el=renderTile(t);el.onclick=()=>{if(s.turn!==s.me.seat)return toast('상대 턴입니다.');socket.emit('discard_tile',{tile:t})};cand.appendChild(el)});
+  const hand=$('myHand');hand.innerHTML='';(s.me.hand13||[]).forEach(t=>hand.appendChild(renderTile(t,'tile')));
+  const ld=$('lastDiscard'); if(s.lastDiscard!=null){ld.classList.remove('hidden');ld.textContent=tileLabel(s.lastDiscard)} else ld.classList.add('hidden');
+  $('candidateCount').textContent=s.me.discardCandidates?.length??0;
+  const ron=$('ronBtn');ron.disabled=!s.canRon;ron.title=s.ronReason||'';
+}
+
+function renderResult(s){
+  show('result'); const r=s.result; $('resultMain').textContent=r?.type==='RON'?r.classification:'DRAW';
+  if(r?.type==='RON'){
+    $('resultDetail').innerHTML=`<div><b>${r.winner===s.me.seat?'YOU WIN':'YOU LOSE'}</b></div><div>${r.han}판 ${r.fu? r.fu+'부':''} · ${money(r.payment)}</div><div>기본 ${r.baseHan}판 · 도라 ${r.dora} · 우라도라 ${r.ura}</div>`;
+    const yl=$('yakuList');yl.innerHTML='';(r.yaku||[]).forEach(y=>{const x=document.createElement('div');x.className='yaku';x.textContent=`${y[0]} ${y[1]}판`;yl.appendChild(x)});
+  } else {$('resultDetail').innerHTML=`<div>양쪽 모두 17장까지 타패했습니다.</div><div>다음 판 판돈: <b>${money(r.nextStake)}</b></div>`;$('yakuList').innerHTML=''}
+}
+
+socket.on('room_created',({code})=>{show('lobby');$('roomCodeLobby').textContent=code;$('bigRoomCode').textContent=code});
+socket.on('joined_room',({code})=>toast(`${code} 방에 참가했습니다.`));
+socket.on('notice',msg=>toast(msg));
+socket.on('dora_pool',({poolSize})=>{
+  const box=$('doraPool');box.innerHTML='';for(let i=0;i<poolSize;i++){const b=document.createElement('button');b.className='dora-back';b.textContent=(i+1);b.onclick=()=>socket.emit('select_dora',{index:i});box.appendChild(b)}
+});
+socket.on('dora_selected',({dora})=>{ $('doraWait').classList.remove('hidden'); $('doraWait').textContent=`도라표시패: ${tileLabel(dora)}`; });
+socket.on('state',s=>{
+  const previousPhase=lastPhase;
+  state=s;
+  if(s.phase==='WAITING'){renderLobby(s);show('lobby');}
+  else if(s.phase==='DORA_SELECT') {show('dora');$('doraRoom').textContent='ROOM '+s.code; const isEast=s.me?.seat==='EAST';$('doraWait').classList.toggle('hidden',isEast);}
+  else if(s.phase==='SETUP') startSetup(s);
+  else if(s.phase==='PLAYING') renderGame(s);
+  else if(s.phase==='RESULT'||s.phase==='DRAW') renderResult(s);
+  lastPhase=s.phase;
+});
+socket.on('error_message',msg=>toast(msg));

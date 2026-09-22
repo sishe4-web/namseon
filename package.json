@@ -1,12 +1,9 @@
 {
   "name": "17bo-online-mvp",
-  "version": "1.0.0",
+  "version": "0.1.0",
   "private": true,
   "description": "Web-based 1:1 Seventeen Steps-inspired mahjong game prototype",
   "main": "server.js",
-  "engines": {
-    "node": ">=20"
-  },
   "scripts": {
     "start": "node server.js",
     "dev": "node server.js"

@@ -4,7 +4,7 @@
 
 ## 실행
 
-Node.js 20 이상이 필요합니다. Windows에서는 `start.bat`을 더블클릭하면 됩니다.
+Node.js 18 이상 권장.
 
 ```bash
 npm install
@@ -14,17 +14,6 @@ npm start
 브라우저에서 `http://localhost:3000` 접속.
 
 친구가 다른 PC에서 접속하려면 서버가 외부에서 접근 가능한 주소로 배포되어 있어야 합니다. 배포 후에는 같은 URL로 접속해 방 코드를 공유하면 됩니다.
-
-## 친구에게 링크를 보내는 공개 배포
-
-이 폴더에는 Render 배포 설정(`render.yaml`)이 포함되어 있습니다.
-
-1. 이 폴더를 GitHub의 새 저장소에 올립니다.
-2. [Render](https://render.com/)에 GitHub 계정으로 로그인합니다.
-3. **New + → Blueprint**를 누르고 방금 저장소를 고릅니다.
-4. 배포가 끝나면 Render가 표시한 `https://...onrender.com` 주소를 친구에게 보냅니다.
-
-Render는 WebSocket(Socket.IO)을 지원하므로 두 사람이 같은 공개 URL에 들어가 방 코드로 연결할 수 있습니다. 무료 서비스는 오래 비어 있으면 첫 접속이 잠시 느릴 수 있습니다.
 
 ## 구현된 기능
 
