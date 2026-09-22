@@ -155,6 +155,63 @@ function renderShowdown(s){
   $('showdownWestName').textContent=west||'PLAYER 2';
 }
 
+function renderCharacterOrder(s){
+  show('characterOrder');
+  const od=s.orderDraw||{};
+  const my=od.mySelection;
+  const revealed=od.revealed;
+  const title=$('orderDrawTitle'), status=$('orderDrawStatus'), result=$('orderDrawResult'), grid=$('orderDrawSlots');
+  grid.innerHTML=''; result.innerHTML='';
+  const mySeat=s.me?.seat, oppSeat=s.opponent?.seat;
+  for(let i=0;i<9;i++){
+    const card=document.createElement('button');
+    card.className='order-draw-tile';
+    const chosen=my===i;
+    card.disabled=!!revealed || my!=null;
+    if(chosen) card.classList.add('selected');
+    if(revealed){
+      const mineSlot=revealed.selections?.[mySeat];
+      const oppSlot=revealed.selections?.[oppSeat];
+      const mineHere=mineSlot===i;
+      const oppHere=oppSlot===i;
+      const value=mineHere?revealed[mySeat]:(oppHere?revealed[oppSeat]:null);
+      if(value!=null){
+        card.innerHTML='';
+        card.appendChild(renderTile(value,'order-reveal-tile'));
+        card.classList.add(mineHere?'revealed-mine':'revealed-opponent');
+      } else {
+        card.innerHTML='<span>·</span>';
+        card.classList.add('revealed-empty');
+      }
+    } else {
+      card.innerHTML='<span>?</span>';
+      if(chosen) card.innerHTML='<span>선택</span>';
+    }
+    card.onclick=()=>socket.emit('select_order_tile',{index:i});
+    grid.appendChild(card);
+  }
+  if(revealed){
+    const mineVal=revealed[mySeat], oppVal=revealed[oppSeat];
+    const winner=revealed.winner;
+    if(revealed.tie){
+      title.textContent='동점! 다시 고릅니다';
+      status.textContent='같은 숫자가 나와 선후 결정 미니게임을 다시 진행합니다.';
+      result.textContent=`내 패 ${mineVal+1}萬 · 상대 패 ${oppVal+1}萬`;
+    } else {
+      const winnerName=winner===mySeat?s.me.nickname:(s.opponent?.nickname||'상대');
+      title.textContent=`${winnerName}이(가) 캐릭터를 먼저 선택합니다`;
+      status.textContent=`내 패 ${mineVal+1}萬 · 상대 패 ${oppVal+1}萬`;
+      result.textContent=`승리 패 · ${Math.max(mineVal,oppVal)+1}萬`;
+    }
+  } else if(my!=null){
+    title.textContent='선택 완료';
+    status.textContent=od.opponentSelected?'두 선택을 공개하는 중…':'상대가 패를 고르기를 기다리는 중…';
+  } else {
+    title.textContent='가려진 패 중 하나를 고르세요';
+    status.textContent='1만부터 9만까지 무작위로 배치된 9장의 패 중 1장을 선택합니다.';
+  }
+}
+
 function renderCharacter(s){
   show('character');
   $('characterRoom').textContent='ROOM '+s.code;
@@ -165,11 +222,12 @@ function renderCharacter(s){
     const taken=choices.EAST===ch||choices.WEST===ch;
     btn.classList.toggle('selected',mine===ch);
     btn.classList.toggle('taken',taken&&mine!==ch);
-    btn.disabled=!!mine|| (taken&&mine!==ch);
+    btn.disabled=!!mine || (!mine && s.characterPickerSeat!==s.me.seat) || (taken&&mine!==ch);
   });
   const status=$('characterStatus');
-  if(mine) status.textContent=`내 선택: ${s.me.characterName} · 상대 선택을 기다리는 중`;
-  else status.textContent='캐릭터 하나를 선택하세요.';
+  if(mine) status.textContent=`내 선택: ${s.me.characterName} · ${s.characterPickerSeat===s.me.seat?'선택 완료':'상대의 선택을 기다리는 중'}`;
+  else if(s.characterPickerSeat===s.me.seat) status.textContent='선후 결정 승리 · 캐릭터를 먼저 선택하세요.';
+  else status.textContent=`상대가 먼저 캐릭터를 선택합니다.`;
 }
 
 function localCurrentWaits(){
@@ -492,6 +550,7 @@ socket.on('state',s=>{
   state=s;
   if(s.phase==='WAITING'){renderLobby(s);show('lobby');}
   else if(s.phase==='SHOWDOWN') renderShowdown(s);
+  else if(s.phase==='CHARACTER_ORDER_DRAW'||s.phase==='CHARACTER_ORDER_REVEAL') renderCharacterOrder(s);
   else if(s.phase==='CHARACTER_SELECT') renderCharacter(s);
   else if(s.phase==='DORA_REVEAL') {show('dora');$('doraRoom').textContent='ROOM '+s.code;} else if(s.phase==='DORA_SELECT') {show('dora');$('doraRoom').textContent='ROOM '+s.code;}
   else if(s.phase==='SETUP') startSetup(s);

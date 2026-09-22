@@ -499,6 +499,14 @@ function publicRoom(room, forSocketId) {
     showdownEndsAt:room.showdownEndsAt||null,
     pendingRon:room.pendingRon ? {winner:room.pendingRon.winner, tile:room.pendingRon.tile, endsAt:room.pendingRon.endsAt} : null,
     characterChoices:{EAST:room.players.EAST?.character||null,WEST:room.players.WEST?.character||null},
+    characterPickerSeat:room.characterPickerSeat||null,
+    orderDraw: room.phase==='CHARACTER_ORDER_DRAW' || room.phase==='CHARACTER_ORDER_REVEAL' ? {
+      slots:Array.from({length:9},(_,i)=>i),
+      mySelection:room.orderDrawSelections?.[seat] ?? null,
+      opponentSelected:room.orderDrawSelections?.[otherSeat(seat)] != null,
+      revealed:room.phase==='CHARACTER_ORDER_REVEAL' ? {...room.orderDrawRevealed, selections:{...room.orderDrawSelections}} : null,
+      endsAt:room.orderDrawEndsAt||null
+    } : null,
     me: me ? {
       id:me.id, nickname:me.nickname, seat:me.seat,
       character:me.character, characterName:characterName(me.character),
@@ -585,7 +593,7 @@ function initialPlayer(id, nickname, seat) {
 function startRound(room) {
   room.dealer='EAST';
   const wall=makeWall();
-  room.phase=room.gameMode==='CHARACTER' && !room.charactersLocked ? 'CHARACTER_SELECT' : 'DORA_REVEAL';
+  room.phase=room.gameMode==='CHARACTER' && !room.charactersLocked ? 'CHARACTER_ORDER_DRAW' : 'DORA_REVEAL';
   room.witnessWall=wall.slice();
   room.players.EAST.private34Tiles=wall.slice(0,34);
   room.players.WEST.private34Tiles=wall.slice(34,68);
@@ -604,6 +612,11 @@ function startRound(room) {
   room.players.EAST.akagiSuit=null; room.players.WEST.akagiSuit=null;
   room.players.EAST.abilityReady=false; room.players.WEST.abilityReady=false;
   room.players.EAST.murauokaReveal=[]; room.players.WEST.murauokaReveal=[];
+  room.orderDrawTiles=shuffle(Array.from({length:9},(_,i)=>i));
+  room.orderDrawSelections={EAST:null,WEST:null};
+  room.orderDrawRevealed=null;
+  room.orderDrawEndsAt=null;
+  room.characterPickerSeat=null;
   room.players.EAST.hand13=[]; room.players.WEST.hand13=[];
   room.players.EAST.discardCandidates=[]; room.players.WEST.discardCandidates=[];
   room.players.EAST.discardedTiles=[]; room.players.WEST.discardedTiles=[];
@@ -617,11 +630,46 @@ function startRound(room) {
   room.players.EAST.setupTimedOut=false; room.players.WEST.setupTimedOut=false;
   io.to(room.players.EAST.id).emit('dora_pool',{poolSize:0});
   io.to(room.players.WEST.id).emit('dora_pool',{poolSize:0});
-  if(room.phase==='DORA_REVEAL') beginDoraReveal(room); else emitRoom(room);
+  if(room.phase==='DORA_REVEAL') beginDoraReveal(room); else beginCharacterOrderDraw(room);
+}
+
+
+function beginCharacterOrderDraw(room) {
+  if(room.gameMode!=='CHARACTER' || room.charactersLocked) return beginDoraReveal(room);
+  room.phase='CHARACTER_ORDER_DRAW';
+  room.orderDrawTiles=shuffle(Array.from({length:9},(_,i)=>i));
+  room.orderDrawSelections={EAST:null,WEST:null};
+  room.orderDrawRevealed=null;
+  room.orderDrawEndsAt=null;
+  emitRoom(room);
+}
+
+function resolveCharacterOrderDraw(room) {
+  if(room.phase!=='CHARACTER_ORDER_DRAW') return;
+  const a=room.orderDrawSelections.EAST, b=room.orderDrawSelections.WEST;
+  if(a==null || b==null) return;
+  room.orderDrawRevealed={EAST:room.orderDrawTiles[a],WEST:room.orderDrawTiles[b],winner:null,tie:false};
+  if(room.orderDrawRevealed.EAST===room.orderDrawRevealed.WEST) room.orderDrawRevealed.tie=true;
+  else room.orderDrawRevealed.winner=room.orderDrawRevealed.EAST>room.orderDrawRevealed.WEST?'EAST':'WEST';
+  room.phase='CHARACTER_ORDER_REVEAL';
+  room.orderDrawEndsAt=Date.now()+2200;
+  emitRoom(room);
+  const endsAt=room.orderDrawEndsAt;
+  setTimeout(()=>{
+    if(room.phase!=='CHARACTER_ORDER_REVEAL' || room.orderDrawEndsAt!==endsAt) return;
+    if(room.orderDrawRevealed?.tie) beginCharacterOrderDraw(room);
+    else {
+      room.characterPickerSeat=room.orderDrawRevealed.winner;
+      room.phase='CHARACTER_SELECT';
+      room.orderDrawEndsAt=null;
+      emitRoom(room);
+    }
+  },2300);
 }
 
 function finishCharacterSelection(room, seat, character) {
   if(room.phase!=='CHARACTER_SELECT') return;
+  if(room.characterPickerSeat && seat!==room.characterPickerSeat) return;
   if(!CHARACTERS[character]) return;
   if(room.players[seat]?.character) return;
   const other=room.players[otherSeat(seat)];
@@ -629,10 +677,14 @@ function finishCharacterSelection(room, seat, character) {
   room.players[seat].character=character;
   if(room.players.EAST?.character && room.players.WEST?.character) {
     room.charactersLocked=true;
+    room.characterPickerSeat=null;
     room.phase='DORA_REVEAL';
     room.players.EAST.abilityReady=false; room.players.WEST.abilityReady=false;
     beginDoraReveal(room);
-  } else emitRoom(room);
+  } else {
+    room.characterPickerSeat=otherSeat(seat);
+    emitRoom(room);
+  }
 }
 
 function beginDoraReveal(room) {
@@ -912,6 +964,19 @@ io.on('connection', socket=>{
         }
       },3050);
     } else emitRoom(room);
+  });
+
+  socket.on('select_order_tile',({index})=>{
+    const room=rooms.get(socket.data.roomCode); if(!room)return;
+    const seat=playerSeat(room,socket.id); if(!seat)return;
+    if(room.gameMode!=='CHARACTER' || room.phase!=='CHARACTER_ORDER_DRAW')return;
+    const i=Number(index);
+    if(!Number.isInteger(i)||i<0||i>=9)return socket.emit('error_message','1만~9만 중 하나를 선택하세요.');
+    if(room.orderDrawSelections?.[seat]!=null)return socket.emit('error_message','이미 패를 선택했습니다.');
+    if(room.orderDrawSelections?.[otherSeat(seat)]===i)return socket.emit('error_message','상대가 고른 패입니다. 다른 패를 선택하세요.');
+    room.orderDrawSelections[seat]=i;
+    if(room.orderDrawSelections.EAST!=null && room.orderDrawSelections.WEST!=null) resolveCharacterOrderDraw(room);
+    else emitRoom(room);
   });
 
   socket.on('select_character',({character})=>{

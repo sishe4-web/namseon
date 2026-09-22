@@ -60,12 +60,23 @@
       <div class="showdown-sub">두 플레이어의 대결이 시작됩니다</div>
     </section>
 
+    <section id="characterOrder" class="screen character-order-screen">
+      <div class="topbar"><div class="logo">17步</div><div class="muted">CHARACTER ORDER</div></div>
+      <div class="character-order-card">
+        <div class="eyebrow">CHARACTER 17步 · 선후 결정</div>
+        <h2 id="orderDrawTitle">가려진 패 중 하나를 고르세요</h2>
+        <p id="orderDrawStatus">두 사람이 각각 1장을 선택하면 패를 공개합니다.</p>
+        <div id="orderDrawSlots" class="order-draw-grid"></div>
+        <div id="orderDrawResult" class="order-draw-result"></div>
+      </div>
+    </section>
+
     <section id="character" class="screen">
       <div class="topbar"><div class="logo">17步</div><div id="characterRoom" class="muted"></div></div>
       <div class="character-card">
         <div class="eyebrow">CHARACTER 17步</div>
         <h2>캐릭터를 선택하세요</h2>
-        <p>두 플레이어가 서로 다른 캐릭터를 하나씩 선택하면 도라표시패 선택으로 넘어갑니다.</p>
+        <p>먼저 선후 결정 미니게임에서 승리한 플레이어가 캐릭터를 먼저 선택하고, 상대가 이어서 선택합니다.</p>
         <div id="characterChoices" class="character-grid">
           <button class="character-option" data-character="KAIJI"><strong>이토 카이지</strong><span>특수 론패 2장</span><small>대기패가 아닌 원하는 패 2장을 지정해 해당 패로 반드시 특수 론</small></button>
           <button class="character-option" data-character="MURAOKA"><strong>무라오카 타카시</strong><span>상대 패산 10장 공개</span><small>조패 라운드에 상대 패산에서 무작위 10장의 종류와 매수를 확인</small></button>
