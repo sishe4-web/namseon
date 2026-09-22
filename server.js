@@ -36,7 +36,6 @@ function tileLabel(t) { return TILE_LABELS[t]; }
 function cloneCounts(counts) { return counts.slice(); }
 function countsFromTiles(tiles) { const c = Array(34).fill(0); for (const t of tiles) c[t]++; return c; }
 function tilesFromCounts(counts) { const a=[]; counts.forEach((n,t)=>{ for(let i=0;i<n;i++) a.push(t); }); return a; }
-function sortTiles(tiles) { return [...tiles].sort((a,b)=>a-b); }
 function shuffle(a) { for (let i=a.length-1;i>0;i--) { const j=Math.floor(Math.random()*(i+1)); [a[i],a[j]]=[a[j],a[i]]; } return a; }
 function makeWall() { const a=[]; for(let t=0;t<34;t++) for(let i=0;i<4;i++) a.push(t); return shuffle(a); }
 function id() { return crypto.randomBytes(5).toString('hex'); }
@@ -141,17 +140,9 @@ function isValuePair(t, seat) {
 function groupsContainTerminalHonor(g) { return g.tiles.some(isTerminalOrHonor); }
 function groupsAllTerminalHonor(g) { return g.tiles.every(isTerminalOrHonor); }
 
-function isKokushi13Wait(counts, winTile) {
-  const yaos = [0,8,9,17,18,26,27,28,29,30,31,32,33];
-  // Before the winning tile, all 13 terminal/honor types must be present exactly once.
-  return yaos.every(t => counts[t] === (t === winTile ? 2 : 1)) &&
-    counts.every((n,t) => yaos.includes(t) ? n >= 1 : n === 0) &&
-    yaos.includes(winTile);
-}
-
-function detectYakuman(counts, decomps, winTile=null) {
+function detectYakuman(counts, decomps) {
   const y=[];
-  if (isKokushi(counts)) y.push({name:'国士無双',han:(winTile!=null && isKokushi13Wait(counts,winTile))?26:13});
+  if (isKokushi(counts)) y.push({name:'国士無双', han:13});
   const allHonors = counts.every((n,t)=>n===0||isHonor(t));
   const allTerminals = counts.every((n,t)=>n===0||isTerminal(t));
   const greenSet = new Set([19,20,22,23,25,32]);
@@ -174,16 +165,11 @@ function detectYakuman(counts, decomps, winTile=null) {
     const s=counts.slice(base,base+9);
     if (s.reduce((a,b)=>a+b,0)!==14) continue;
     const need=[3,1,1,1,1,1,1,1,3];
-    if (need.every((n,i)=>s[i]>=n)) {
-      const extra = s.map((n,i)=>n-need[i]);
-      const extraCount=extra.reduce((a,b)=>a+b,0);
-      const pure = winTile!=null && extraCount===1 && extra[winTile-base]===1 &&
-        counts.every((n,t)=>t>=base&&t<base+9 ? true : n===0);
-      y.push({name:'九蓮宝燈',han:pure?26:13});
-    }
+    if (need.every((n,i)=>s[i]>=n)) y.push({name:'九蓮宝燈',han:13});
   }
   return dedupeYakuman(y);
 }
+function dedupeYakuman(y) { const seen=new Set(); return y.filter(v=>{const key=v.name+v.requiresPairWait; if(seen.has(key)) return false; seen.add(key); return true;}); }
 
 function calcFu(decomp, counts, winTile, seat, winByRon=true, pinfu=false, chiitoi=false) {
   if (chiitoi) return 25;
@@ -215,13 +201,8 @@ function calcYakuForDecomp(decomp, counts, winTile, seat, context) {
   if (pinfu) y.push(['平和',1]);
 
   const seqKeys=allSeq.map(g=>g.tiles.join(','));
-  const seqFreq=new Map();
-  for(const k of seqKeys) seqFreq.set(k,(seqFreq.get(k)||0)+1);
-  const pairSeqCount=[...seqFreq.values()].filter(n=>n>=2).length;
-  const ryanpeko = allSeq.length===4 && pairSeqCount===2;
-  const iipei = !ryanpeko && pairSeqCount>=1;
-  if (ryanpeko) y.push(['二盃口',3]);
-  else if (iipei) y.push(['一盃口',1]);
+  const iipei = seqKeys.some((v,i)=>seqKeys.indexOf(v)!==i);
+  if (iipei) y.push(['一盃口',1]);
 
   const suitsPresent = new Set();
   let honor=false;
@@ -277,7 +258,7 @@ function calcYakuForDecomp(decomp, counts, winTile, seat, context) {
 
 function scoreHand(tiles14, winTile, seat, context) {
   const counts=countsFromTiles(tiles14);
-  const yakuman=detectYakuman(counts, standardDecompositions(counts), winTile);
+  const yakuman=detectYakuman(counts, standardDecompositions(counts));
   if (yakuman.length) {
     let yCount=0;
     for(const y of yakuman) yCount += y.han/13;
@@ -344,7 +325,7 @@ function evaluateRon(room, winnerSeat, winTile, discarderSeat) {
   const context={
     riichi:true,
     ippatsu:p.ippatsu,
-    houtei: discarderSeat!==room.dealer && room.players[discarderSeat]?.discardCount===17,
+    houtei: discarderSeat==='WEST' && room.players[discarderSeat]?.discardCount===17,
     winByRon:true
   };
   const tiles=p.hand13.concat([winTile]);
@@ -396,10 +377,10 @@ function publicRoom(room, forSocketId) {
     result:room.result,
     me: me ? {
       id:me.id, nickname:me.nickname, seat:me.seat,
-      private34Tiles:sortTiles(me.private34Tiles),
-      hand13:sortTiles(me.hand13),
-      discardCandidates:sortTiles(me.discardCandidates),
-      discardedTiles:me.discardedTiles,
+      private34Tiles:me.private34Tiles,
+      hand13:me.hand13,
+      discardCandidates:me.discardCandidates,
+      discardedTiles:me.discardedTiles.slice(),
       discardCount:me.discardCount,
       setupConfirmed:me.setupConfirmed,
       isTenpai:me.isTenpai,
@@ -412,7 +393,7 @@ function publicRoom(room, forSocketId) {
     }:null,
     opponent: opp ? {
       id:opp.id, nickname:opp.nickname, seat:opp.seat,
-      discardedTiles:opp.discardedTiles,
+      discardedTiles:opp.discardedTiles.slice(),
       discardCount:opp.discardCount,
       setupConfirmed:opp.setupConfirmed,
       isTenpai:opp.isTenpai,
@@ -540,17 +521,16 @@ function discard(room, seat, tile) {
   p.discardCandidates.splice(idx,1);
   p.discardedTiles.push(tile);
   p.discardCount++;
-  room.lastDiscard=tile; room.lastDiscardBy=seat;
+  room.lastDiscard=tile;
+  room.lastDiscardBy=seat;
   room.turn=otherSeat(seat);
-  // Once a player gets their next turn, ippatsu has expired. Therefore the turn player remains in ippatsu only until then.
+
+  // Resolve all state changes before broadcasting. The opponent must receive
+  // the new discardedTiles array, lastDiscard, lastDiscardBy and turn in the
+  // same state packet; otherwise the two clients can temporarily disagree.
   p.temporaryFuriten=false;
-  // Ippatsu lasts only until the player's first discard.
-  p.ippatsu=false;
   updateFuriten(p);
-  // If opponent did not ron, ippatsu for both expires after the winner's next turn begins.
-  const opp=room.players[otherSeat(seat)];
-  // keep opp.ippatsu until their first own discard; handled below at turn start in next call.
-  emitRoom(room);
+  prepareTurnState(room);
   return {ok:true};
 }
 
@@ -591,6 +571,7 @@ function doDraw(room) {
     room.phase='DRAW';
     room.stake*=2;
     room.result={type:'DRAW',message:'17장씩 타패했지만 화료가 없어 유국',nextStake:room.stake};
+    room.dealer=otherSeat(room.dealer);
     emitRoom(room);
   }
 }
@@ -617,7 +598,7 @@ io.on('connection', socket=>{
 
   socket.on('select_dora',({index})=>{
     const room=rooms.get(socket.data.roomCode); if(!room)return;
-    if(playerSeat(room,socket.id)!==room.dealer)return socket.emit('error_message','현재 선만 도라표시패를 선택할 수 있습니다.');
+    if(playerSeat(room,socket.id)!=='EAST')return socket.emit('error_message','선만 도라표시패를 선택할 수 있습니다.');
     finishDoraSelection(room,index);
   });
 
@@ -632,7 +613,8 @@ io.on('connection', socket=>{
   socket.on('discard_tile',({tile})=>{
     const room=rooms.get(socket.data.roomCode); if(!room)return;
     const seat=playerSeat(room,socket.id); if(!seat)return;
-    const r=discard(room,seat,Number(tile)); if(!r.ok)socket.emit('error_message',r.reason);
+    const r=discard(room,seat,Number(tile));
+    if(!r.ok) return socket.emit('error_message',r.reason);
     doDraw(room);
   });
 
@@ -656,7 +638,6 @@ io.on('connection', socket=>{
     const room=rooms.get(socket.data.roomCode); if(!room)return;
     if(room.phase!=='RESULT' && room.phase!=='DRAW')return;
     room.roundNumber++;
-    room.dealer=otherSeat(room.dealer);
     startRound(room);
   });
 
