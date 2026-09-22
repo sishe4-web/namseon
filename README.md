@@ -64,3 +64,6 @@ npm start
 ```
 
 서버가 `GameState`를 권위적으로 가지고 있으며, 클라이언트에는 상대의 비공개 34장/13장 패가 전달되지 않습니다.
+
+# Mahjong tile images
+Place tile images at `public/assets/tiles/` using filenames `0` through `33` (for example `0.png`, `1.png`, ... `33.png`). The client supports png, jpg, jpeg, webp, and gif.

@@ -1,10 +1,6 @@
 services:
   - type: web
-    name: 17bo-online
-    env: node
-    buildCommand: npm ci
-    startCommand: npm start
+    name: seventeen-bo-online
+    runtime: docker
+    plan: free
     healthCheckPath: /
-    envVars:
-      - key: NODE_ENV
-        value: production
