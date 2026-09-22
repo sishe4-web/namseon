@@ -495,6 +495,8 @@ function publicRoom(room, forSocketId) {
     nextReady:room.nextReady || {EAST:false,WEST:false},
     nextReadyCount:Object.values(room.nextReady || {}).filter(Boolean).length,
     setupUnlock:room.setupUnlock||{EAST:false,WEST:false},
+    startReady:room.startReady||{EAST:false,WEST:false},
+    showdownEndsAt:room.showdownEndsAt||null,
     pendingRon:room.pendingRon ? {winner:room.pendingRon.winner, tile:room.pendingRon.tile, endsAt:room.pendingRon.endsAt} : null,
     characterChoices:{EAST:room.players.EAST?.character||null,WEST:room.players.WEST?.character||null},
     me: me ? {
@@ -679,20 +681,16 @@ function lockSetup(room, seat, hand13, forced=false) {
   }
   // Even after the 3-minute limit, the player still has to choose exactly 13 tiles.
   if(selected.length!==13) return;
-  // ORIGINAL mode is completely independent of character abilities.
-  // CHARACTER mode never blocks the 13-tile confirmation button just because
-  // an ability has not yet been configured. If the player confirms first,
-  // finalize a safe default so the round can never get stuck behind an ability UI.
-  if(room.gameMode==='CHARACTER' && p.character==='KAIJI') {
-    const naturalWaits=getWaits(selected);
-    let special=[...new Set((p.specialRonTiles||[]).map(Number).filter(t=>Number.isInteger(t)&&t>=0&&t<34))]
-      .filter(t=>!naturalWaits.includes(t));
-    const candidates=shuffle([...Array(34).keys()].filter(t=>!naturalWaits.includes(t)));
-    for(const t of candidates) if(special.length<2 && !special.includes(t)) special.push(t);
-    p.specialRonTiles=special.slice(0,2);
+  // ORIGINAL mode has no character ability gate.
+  // CHARACTER mode requires only the abilities that actually need player input.
+  if(!forced && room.gameMode==='CHARACTER' && p.character==='KAIJI') {
+    const waits=getWaits(selected);
+    const special=[...new Set((p.specialRonTiles||[]).map(Number))].filter(t=>Number.isInteger(t)&&t>=0&&t<34);
+    if(special.length!==2) io.to(p.id).emit('error_message','카이지 특수능력의 론패 2장을 먼저 선택해야 합니다.'); return;
+    if(special.some(t=>waits.includes(t))) io.to(p.id).emit('error_message','카이지 특수 론패와 일반 대기패가 겹칩니다. 다른 패를 선택하세요.'); return;
   }
-  if(room.gameMode==='CHARACTER' && p.character==='AKAGI' && !['m','p','s'].includes(p.akagiSuit)) {
-    p.akagiSuit=shuffle(['m','p','s'])[0];
+  if(!forced && room.gameMode==='CHARACTER' && p.character==='AKAGI' && !['m','p','s'].includes(p.akagiSuit)) {
+    io.to(p.id).emit('error_message','아카기의 절일문 수패(만수·통수·삭수)를 먼저 선택해야 합니다.'); return;
   }
   p.hand13=selected;
   const restCounts=countsFromTiles(p.private34Tiles);
@@ -777,8 +775,15 @@ function discard(room, seat, tile) {
   // Ippatsu ends when that player makes their first discard.
   p.ippatsu=false;
   updateFuriten(p);
-  // Broadcast only after every discard-related field is finalized so both clients
-  // receive the same discardedTiles / lastDiscard / lastDiscardBy / turn snapshot.
+  p.setupConfirmed=false;
+  p.hand13=[];
+  p.discardCandidates=[];
+  p.isTenpai=false;
+  p.waits=[];
+  p.isRiichi=false;
+  p.ippatsu=false;
+  p.setupTimedOut=false;
+  room.setupUnlock[seat]=true;
   emitRoom(room);
   return {ok:true};
 }
@@ -869,7 +874,7 @@ io.on('connection', socket=>{
     const startingMoney=Math.max(Number(stake)||1000000,1000000)*10;
     const mode=gameMode==='CHARACTER'?'CHARACTER':'ORIGINAL';
     const startingStake=Math.max(Number(stake)||1000000,1);
-    const room={code,gameMode:mode,charactersLocked:false,stake:startingStake,startingStake,startingMoney,players:{EAST:initialPlayer(socket.id,String(nickname||'Player 1').slice(0,20),'EAST'),WEST:null},dealer:'EAST',roundNumber:1,phase:'WAITING',setupEndsAt:null,turn:null,lastDiscard:null,lastDiscardBy:null,winner:null,result:null,doraIndicator:null,uraDoraIndicator:null,doraPool:[],finalRound:false,doraRevealEndsAt:null,turnEndsAt:null,ronRevealEndsAt:null,ronBlockEndsAt:null,pendingRon:null,setupUnlock:{EAST:false,WEST:false}};
+    const room={code,gameMode:mode,charactersLocked:false,stake:startingStake,startingStake,startingMoney,players:{EAST:initialPlayer(socket.id,String(nickname||'Player 1').slice(0,20),'EAST'),WEST:null},dealer:'EAST',roundNumber:1,phase:'WAITING',setupEndsAt:null,turn:null,lastDiscard:null,lastDiscardBy:null,winner:null,result:null,doraIndicator:null,uraDoraIndicator:null,doraPool:[],finalRound:false,doraRevealEndsAt:null,showdownEndsAt:null,turnEndsAt:null,ronRevealEndsAt:null,ronBlockEndsAt:null,pendingRon:null,setupUnlock:{EAST:false,WEST:false},startReady:{EAST:false,WEST:false}};
     room.players.EAST.money=startingMoney;
     rooms.set(code,room); socket.join(code); socket.data.roomCode=code;
     socket.emit('room_created',{code}); emitRoom(room);
@@ -886,6 +891,27 @@ io.on('connection', socket=>{
     socket.emit('joined_room',{code:room.code});
     io.to(room.code).emit('notice','두 플레이어가 입장했습니다. 게임을 시작합니다.');
     startRound(room);
+  });
+
+  socket.on('start_ready',()=>{
+    const room=rooms.get(socket.data.roomCode); if(!room)return;
+    const seat=playerSeat(room,socket.id); if(!seat)return;
+    if(room.phase!=='WAITING')return;
+    if(!room.players.EAST || !room.players.WEST)return socket.emit('error_message','상대 플레이어가 아직 입장하지 않았습니다.');
+    room.startReady=room.startReady||{EAST:false,WEST:false};
+    room.startReady[seat]=true;
+    if(room.startReady.EAST && room.startReady.WEST){
+      room.phase='SHOWDOWN';
+      room.showdownEndsAt=Date.now()+3000;
+      emitRoom(room);
+      const endsAt=room.showdownEndsAt;
+      setTimeout(()=>{
+        if(room.phase==='SHOWDOWN' && room.showdownEndsAt===endsAt){
+          room.showdownEndsAt=null;
+          startRound(room);
+        }
+      },3050);
+    } else emitRoom(room);
   });
 
   socket.on('select_character',({character})=>{
@@ -990,7 +1016,7 @@ io.on('connection', socket=>{
     const room=rooms.get(socket.data.roomCode); if(!room)return;
     const seat=playerSeat(room,socket.id); if(!seat)return;
     room.phase='WAITING'; room.roundNumber=1; room.stake=room.startingStake||1000000; room.finalRound=false; room.uraDoraIndicator=null; room.doraIndicator=null;
-    room.charactersLocked=false; room.nextReady={EAST:false,WEST:false}; room.setupUnlock={EAST:false,WEST:false};
+    room.charactersLocked=false; room.nextReady={EAST:false,WEST:false}; room.setupUnlock={EAST:false,WEST:false}; room.startReady={EAST:false,WEST:false}; room.showdownEndsAt=null; room.startReady={EAST:false,WEST:false}; room.showdownEndsAt=null;
     for(const p of [room.players.EAST,room.players.WEST]) if(p){
       p.money=room.startingMoney; p.character=null; p.specialRonTiles=[]; p.akagiSuit=null; p.abilityReady=false; p.murauokaReveal=[];
       p.setupConfirmed=false; p.hand13=[]; p.discardCandidates=[]; p.discardedTiles=[]; p.discardCount=0; p.waits=[]; p.furiten=false; p.temporaryFuriten=false;
@@ -1003,7 +1029,7 @@ io.on('connection', socket=>{
     const code=socket.data.roomCode; if(!code)return;
     const room=rooms.get(code); if(!room)return;
     const seat=playerSeat(room,socket.id);
-    if(seat){ room.phase='WAITING'; room.players[seat]=null; }
+    if(seat){ room.phase='WAITING'; room.startReady={EAST:false,WEST:false}; room.showdownEndsAt=null; room.players[seat]=null; }
     if(!room.players.EAST && !room.players.WEST)rooms.delete(code);
     else emitRoom(room);
   });
@@ -1012,6 +1038,7 @@ io.on('connection', socket=>{
 setInterval(()=>{
   const now=Date.now();
   for(const room of rooms.values()){
+    if(room.phase==='SHOWDOWN' && room.showdownEndsAt && now>=room.showdownEndsAt){ room.showdownEndsAt=null; startRound(room); continue; }
     if(room.phase==='DORA_REVEAL' && room.doraRevealEndsAt && now>=room.doraRevealEndsAt){ finishDoraReveal(room); continue; }
     if(room.phase==='SETUP' && room.setupEndsAt && now>=room.setupEndsAt){
       for(const seat of ['EAST','WEST']){

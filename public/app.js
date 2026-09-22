@@ -102,9 +102,16 @@ document.querySelectorAll('.character-option').forEach(btn=>btn.addEventListener
 
 $('confirmHandBtn').onclick=()=>{
   if(state?.me?.setupConfirmed && !state?.opponent?.setupConfirmed){socket.emit('unlock_setup');return;}
-  if(localSelected.length!==13){toast('13장을 선택하세요.');return}
-  // Character abilities are deliberately independent from the 13-tile lock.
-  // The server finalizes a safe default if an ability was not configured yet.
+  if(localSelected.length!==13){toast(`현재 ${localSelected.length}장입니다. 정확히 13장을 선택하세요.`);return}
+  if(state?.gameMode==='CHARACTER'){
+    const ch=state.me?.character;
+    if(ch==='KAIJI'){
+      const waits=new Set(localCurrentWaits());
+      if(localKaijiTiles.length!==2){toast('카이지 특수능력의 론패 2장을 먼저 골라야 합니다.');return;}
+      if(localKaijiTiles.some(t=>waits.has(t))){toast('특수 론패와 일반 대기패가 겹칩니다. 다른 패를 선택하세요.');return;}
+    }
+    if(ch==='AKAGI' && !['m','p','s'].includes(state.me?.akagiSuit)){toast('아카기의 절일문 수패(만수·통수·삭수)를 먼저 선택해야 합니다.');return;}
+  }
   socket.emit('confirm_hand',{tiles:localSelected.map(x=>x.tile)});
 };
 $('ronBtn').onclick=()=>socket.emit('declare_ron');
@@ -117,16 +124,37 @@ $('cancelAllSetupBtn').onclick=()=>{
   document.querySelectorAll('#privateWall .tile.selected').forEach(el=>el.classList.remove('selected'));
   renderSelected();
   renderAbilityPanel(state);
-  const btn=$('confirmHandBtn'); if(btn) btn.disabled=true;
+  const btn=$('confirmHandBtn'); if(btn) btn.disabled=false;
   socket.emit('preview_setup',{tiles:[]});
 };
 
 function renderLobby(s){
   $('roomCodeLobby').textContent=s.code; $('bigRoomCode').textContent=s.code;
-  $('eastName').textContent=s.me?.seat==='EAST'?s.me?.nickname:(s.opponent?.seat==='EAST'?s.opponent?.nickname:'-');
-  $('westName').textContent=s.me?.seat==='WEST'?s.me?.nickname:(s.opponent?.seat==='WEST'?s.opponent?.nickname:'-');
-  $('westStatus').textContent=s.opponent?'READY':'WAITING';
+  const eastName=s.me?.seat==='EAST'?s.me?.nickname:(s.opponent?.seat==='EAST'?s.opponent?.nickname:'-');
+  const westName=s.me?.seat==='WEST'?s.me?.nickname:(s.opponent?.seat==='WEST'?s.opponent?.nickname:'-');
+  $('eastName').textContent=eastName; $('westName').textContent=westName;
+  const ready=s.startReady||{EAST:false,WEST:false};
+  $('eastStatus').textContent=ready.EAST?'START OK':(s.opponent?'WAITING':'ROOM HOST');
+  $('westStatus').textContent=ready.WEST?'START OK':(s.opponent?'WAITING':'WAITING');
+  const btn=$('startGameBtn');
+  if(btn){
+    const myReady=!!ready[s.me?.seat];
+    const both=!!s.opponent;
+    btn.disabled=!both || myReady;
+    btn.textContent=myReady?'시작 확인 완료 · 상대를 기다리는 중':(both?'상대 입장 확인 · 게임 시작':'상대 입장을 기다리는 중');
+  }
+  const st=$('lobbyStartStatus');
+  if(st) st.textContent=!s.opponent?'상대가 입장하면 서로 확인 후 각자 시작 버튼을 눌러주세요.':(ready.EAST&&ready.WEST?'두 플레이어 확인 완료 · 대결을 시작합니다.':ready[s.me?.seat]?'내 시작 확인 완료 · 상대의 확인을 기다리는 중입니다.':'두 플레이어가 입장했습니다. 서로 확인한 뒤 시작 버튼을 눌러주세요.');
 }
+
+function renderShowdown(s){
+  show('showdown');
+  const east=s.me?.seat==='EAST'?s.me?.nickname:(s.opponent?.seat==='EAST'?s.opponent?.nickname:'PLAYER 1');
+  const west=s.me?.seat==='WEST'?s.me?.nickname:(s.opponent?.seat==='WEST'?s.opponent?.nickname:'PLAYER 2');
+  $('showdownEastName').textContent=east||'PLAYER 1';
+  $('showdownWestName').textContent=west||'PLAYER 2';
+}
+
 function renderCharacter(s){
   show('character');
   $('characterRoom').textContent='ROOM '+s.code;
@@ -189,7 +217,7 @@ function renderAbilityPanel(s){
   // 13장 선택 완료는 캐릭터 능력 설정과 독립적이다.
   // 능력은 확정 시 서버가 검증/기본값 확정하므로 준비 버튼을 막지 않는다.
   const confirm=$('confirmHandBtn');
-  if(confirm && !s.me.setupConfirmed) confirm.disabled=localSelected.length!==13;
+  if(confirm && !s.me.setupConfirmed) confirm.disabled=false;
 }
 
 function startSetup(s){
@@ -223,7 +251,7 @@ function startSetup(s){
     container.appendChild(el);
   });
   renderSelected(); updateSetupTimer(s.setupEndsAt); renderAbilityPanel(s);
-  const confirm=$('confirmHandBtn'); const locked=!!s.me.setupConfirmed; const canUnlock=locked && !s.opponent?.setupConfirmed; confirm.textContent=locked?(canUnlock?'확정 취소하고 다시 선택':'확정 완료'): '13장 확정'; confirm.disabled=locked ? !canUnlock : (localSelected.length!==13);
+  const confirm=$('confirmHandBtn'); const locked=!!s.me.setupConfirmed; const canUnlock=locked && !s.opponent?.setupConfirmed; confirm.textContent=locked?(canUnlock?'확정 취소하고 다시 선택':'확정 완료'): '13장 확정'; confirm.disabled=locked ? !canUnlock : false;
   $('cancelAllSetupBtn').disabled=locked; show('setup');
   socket.emit('preview_setup',{tiles:localSelected.map(x=>x.tile)});
 }
@@ -239,6 +267,15 @@ function toggleSelection(t,wallIndex,el){
     el.classList.add('selected');
   }
   renderSelected();
+  if(state?.gameMode==='CHARACTER' && state.me?.character==='KAIJI' && localKaijiTiles.length){
+    const waits=new Set(localCurrentWaits());
+    const overlap=localKaijiTiles.filter(t=>waits.has(t));
+    if(overlap.length){
+      localKaijiTiles=localKaijiTiles.filter(t=>!waits.has(t));
+      socket.emit('set_kaiji_tiles',{tiles:localKaijiTiles});
+      toast(`카이지 특수 론패 ${overlap.map(tileLabel).join(', ')}가 일반 대기패와 겹쳤습니다. 해당 론패를 해제했습니다.`);
+    }
+  }
   if(state) renderAbilityPanel(state);
   socket.emit('preview_setup',{tiles:localSelected.map(x=>x.tile)});
 }
@@ -353,6 +390,13 @@ function renderGame(s){
     const count=Number(s.me.waitRemaining?.[t] ?? Math.max(0,4-(s.me.hand13||[]).filter(x=>x===t).length-(s.doraIndicator===t?1:0)));
     waitBox.insertAdjacentHTML('beforeend',waitTileMarkup(t,count));
   });
+  const skillBox=$('gameSkillInfo');
+  if(skillBox){
+    if(s.gameMode==='CHARACTER' && s.me.character==='KAIJI'){
+      skillBox.classList.remove('hidden');
+      skillBox.innerHTML='<b>카이지 특수 론패</b><div class="skill-tile-row">'+(s.me.specialRonTiles||[]).map(t=>tileImageMarkup(t)).join('')+'</div>';
+    } else skillBox.classList.add('hidden');
+  }
   const ld=$('lastDiscard'); if(s.lastDiscard!=null){ld.classList.remove('hidden');setTileContent(ld,s.lastDiscard,'tile last-discard-tile')} else {ld.classList.add('hidden');ld.innerHTML=''}
   $('candidateCount').textContent=s.me.discardCandidates?.length??0;
   const ron=$('ronBtn');ron.disabled=!s.canRon;ron.title=s.ronReason||''; if(s.ronBlockEndsAt && Date.now()<s.ronBlockEndsAt && s.turn===s.me.seat) cand.classList.add('discard-blocked'); else cand.classList.remove('discard-blocked');
@@ -433,6 +477,7 @@ function renderResult(s){
   }
 }
 
+const startGameBtn=$('startGameBtn'); if(startGameBtn) startGameBtn.onclick=()=>socket.emit('start_ready');
 socket.on('restart_done',()=>location.reload());
 socket.on('room_created',({code})=>{show('lobby');$('roomCodeLobby').textContent=code;$('bigRoomCode').textContent=code});
 socket.on('joined_room',({code})=>toast(`${code} 방에 참가했습니다.`));
@@ -446,6 +491,7 @@ socket.on('state',s=>{
   const previousPhase=lastPhase;
   state=s;
   if(s.phase==='WAITING'){renderLobby(s);show('lobby');}
+  else if(s.phase==='SHOWDOWN') renderShowdown(s);
   else if(s.phase==='CHARACTER_SELECT') renderCharacter(s);
   else if(s.phase==='DORA_REVEAL') {show('dora');$('doraRoom').textContent='ROOM '+s.code;} else if(s.phase==='DORA_SELECT') {show('dora');$('doraRoom').textContent='ROOM '+s.code;}
   else if(s.phase==='SETUP') startSetup(s);

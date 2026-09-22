@@ -41,10 +41,23 @@
         <div class="room-code-big" id="bigRoomCode">------</div>
         <button id="copyRoomBtn">코드 복사</button>
         <div class="players-lobby">
-          <div class="slot"><span>東 · 선</span><strong id="eastName">-</strong><em>READY</em></div>
+          <div class="slot"><span>東 · 선</span><strong id="eastName">-</strong><em id="eastStatus">WAITING</em></div>
           <div class="slot"><span>西 · 자</span><strong id="westName">-</strong><em id="westStatus">WAITING</em></div>
         </div>
+        <div id="lobbyStartStatus" class="lobby-start-status">두 플레이어가 입장하면 서로 확인 후 각자 시작 버튼을 눌러주세요.</div>
+        <button id="startGameBtn" class="primary wide" disabled>상대 입장 확인 · 게임 시작</button>
       </div>
+    </section>
+
+    <section id="showdown" class="screen showdown-screen">
+      <div class="showdown-vignette"></div>
+      <div class="showdown-top">17步 · MATCH START</div>
+      <div class="showdown-stage">
+        <div class="showdown-player showdown-left"><div class="showdown-seat">東 · 선</div><div id="showdownEastName" class="showdown-name">PLAYER 1</div></div>
+        <div class="showdown-vs">VS</div>
+        <div class="showdown-player showdown-right"><div class="showdown-seat">西 · 자</div><div id="showdownWestName" class="showdown-name">PLAYER 2</div></div>
+      </div>
+      <div class="showdown-sub">두 플레이어의 대결이 시작됩니다</div>
     </section>
 
     <section id="character" class="screen">
