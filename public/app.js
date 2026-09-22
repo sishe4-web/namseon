@@ -76,6 +76,8 @@ function startSetup(s){
   $('stakeSetup').textContent=money(s.stake);
   setTileContent($('setupDora'),s.doraIndicator,'tile-mini');
   setTileContent($('setupDoraBig'),s.doraIndicator,'tile-mini');
+  setTileContent($('setupDoraTile'),s.doraTile,'tile-mini');
+  setTileContent($('setupDoraBigTile'),s.doraTile,'tile-mini');
   const container=$('privateWall'); container.innerHTML='';
   // Keep the physical wallIndex for duplicate-tile identity, but DISPLAY in canonical tile order.
   const wallInstances=sortTileInstances(wall.map((tile,wallIndex)=>({tile,wallIndex})));
@@ -132,8 +134,13 @@ function isStdLocal(c){const a=c.slice();function rec(pos,pair,groups){while(pos
 function isAgariLocal(c){return isKokushiLocal(c)||isChiitoiLocal(c)||isStdLocal(c)}
 function updateSetupTimer(end){clearInterval(setupTimerHandle);const tick=()=>{const ms=Math.max(0,end-Date.now());const sec=Math.ceil(ms/1000);$('setupTimer').textContent=`⌛ ${String(Math.floor(sec/60)).padStart(2,'0')}:${String(sec%60).padStart(2,'0')}`;if(ms<=0)clearInterval(setupTimerHandle)};tick();setupTimerHandle=setInterval(tick,250)}
 
+function doraFromIndicatorLocal(ind){
+  if(ind<27){const base=Math.floor(ind/9)*9; return ind<base+8?ind+1:base;}
+  if(ind<=30)return ind===30?27:ind+1;
+  if(ind===31)return 32; if(ind===32)return 33; return 31;
+}
 function renderGame(s){
-  show('game'); $('roomInGame').textContent='ROOM '+s.code; $('stakeGame').textContent=money(s.stake); $('mySeat').textContent=s.me.seat==='EAST'?'東':'西'; $('opponentName').textContent=s.opponent?.nickname||'상대'; $('opponentSeat').textContent=s.opponent?.seat==='EAST'?'東':'西'; $('opponentCount').textContent=`${s.opponent?.discardCount||0}/17`; setTileContent($('doraGame'),s.doraIndicator,'tile-mini');
+  show('game'); $('roomInGame').textContent='ROOM '+s.code; $('stakeGame').textContent=money(s.stake); $('mySeat').textContent=s.me.seat==='EAST'?'東':'西'; $('opponentName').textContent=s.opponent?.nickname||'상대'; $('opponentSeat').textContent=s.opponent?.seat==='EAST'?'東':'西'; $('opponentCount').textContent=`${s.opponent?.discardCount||0}/17`; setTileContent($('doraGame'),s.doraIndicator,'tile-mini'); setTileContent($('doraGameTile'),s.doraTile,'tile-mini');
   $('opponentRiichi').textContent=s.opponent?.isRiichi?'RIICHI':'-'; $('myRiichi').textContent=s.me.isRiichi?'RIICHI':'NO RIICHI'; $('myTenpai').textContent=s.me.isTenpai?'TENPAI':'NOTEN'; $('myFuriten').textContent=s.me.furiten?'FURITEN':''; $('discardProgress').textContent=`${s.me.discardCount}/17`;
   $('turnIndicator').textContent=s.turn===s.me.seat?'MY TURN':'OPPONENT TURN';
   const od=$('opponentDiscards'); od.innerHTML=''; (s.opponent?.discardedTiles||[]).forEach(t=>od.appendChild(renderTile(t)));
@@ -144,8 +151,25 @@ function renderGame(s){
   const ron=$('ronBtn');ron.disabled=!s.canRon;ron.title=s.ronReason||'';
 }
 
+function resultRankLabel(classification){
+  const map={
+    '満貫':'만관','跳満':'하네만','倍満':'배만','三倍満':'삼배만','役満':'역만',
+    '2倍役満':'더블 역만','3倍役満':'트리플 역만','数え役満':'헤아림 역만'
+  };
+  return map[classification] || classification || 'DRAW';
+}
+function resultRankClass(classification){
+  if(classification==='満貫') return 'result-rank-mangan';
+  if(classification==='跳満') return 'result-rank-haneman';
+  if(classification==='倍満') return 'result-rank-baiman';
+  if(classification==='三倍満') return 'result-rank-sanbaiman';
+  if((classification||'').includes('役満') || classification==='数え役満') return 'result-rank-yakuman';
+  return 'result-rank-default';
+}
 function renderResult(s){
-  show('result'); const r=s.result; $('resultMain').textContent=r?.type==='RON'?r.classification:'DRAW';
+  show('result'); const r=s.result;
+  const rank=$('resultRank'); rank.className='result-rank '+resultRankClass(r?.classification);
+  $('resultMain').textContent=r?.type==='RON'?resultRankLabel(r.classification):'유국';
   if(r?.type==='RON'){
     const winnerName=r.winner===s.me.seat?s.me.nickname:(s.opponent?.nickname||'상대');
     const loserName=r.loser===s.me.seat?s.me.nickname:(s.opponent?.nickname||'상대');
@@ -160,12 +184,12 @@ socket.on('notice',msg=>toast(msg));
 socket.on('dora_pool',({poolSize})=>{
   const box=$('doraPool');box.innerHTML='';for(let i=0;i<poolSize;i++){const b=document.createElement('button');b.className='dora-back';b.textContent=(i+1);b.onclick=()=>socket.emit('select_dora',{index:i});box.appendChild(b)}
 });
-socket.on('dora_selected',({dora})=>{ $('doraWait').classList.remove('hidden'); $('doraWait').innerHTML=''; $('doraWait').append('도라표시패: '); $('doraWait').appendChild(renderTile(dora,'tile-mini')); });
+socket.on('dora_selected',({dora})=>{ $('doraWait').classList.remove('hidden'); $('doraWait').innerHTML=''; $('doraWait').append('도라표시패가 공개되었습니다.'); $('doraWait').appendChild(renderTile(dora,'tile-mini')); $('doraReveal').classList.remove('hidden'); setTileContent($('doraRevealIndicator'),dora,'tile-mini'); const actual=doraFromIndicatorLocal(dora); setTileContent($('doraRevealTile'),actual,'tile-mini'); });
 socket.on('state',s=>{
   const previousPhase=lastPhase;
   state=s;
   if(s.phase==='WAITING'){renderLobby(s);show('lobby');}
-  else if(s.phase==='DORA_SELECT') {show('dora');$('doraRoom').textContent='ROOM '+s.code; const isDealer=s.dealer===s.me?.seat;$('doraWait').classList.toggle('hidden',isDealer);}
+  else if(s.phase==='DORA_SELECT') {show('dora');$('doraRoom').textContent='ROOM '+s.code; const isDealer=s.dealer===s.me?.seat; $('doraReveal').classList.toggle('hidden',s.doraIndicator==null); $('doraWait').classList.toggle('hidden',isDealer && s.doraIndicator==null); if(s.doraIndicator!=null){setTileContent($('doraRevealIndicator'),s.doraIndicator,'tile-mini'); setTileContent($('doraRevealTile'),s.doraTile,'tile-mini');}}
   else if(s.phase==='SETUP') startSetup(s);
   else if(s.phase==='PLAYING') renderGame(s);
   else if(s.phase==='RESULT'||s.phase==='DRAW') renderResult(s);

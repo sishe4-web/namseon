@@ -50,6 +50,7 @@
         <p>선택한 위치의 패가 도라표시패가 되고, 그 아래 패는 우라도라표시패가 됩니다.</p>
         <div id="doraPool" class="dora-pool"></div>
         <div id="doraWait" class="muted hidden">선의 선택을 기다리는 중...</div>
+        <div id="doraReveal" class="dora-reveal hidden"><div><span class="dora-label">도라표시패</span><span id="doraRevealIndicator"></span></div><div class="dora-arrow">→</div><div><span class="dora-label dora-hot">실제 도라</span><span id="doraRevealTile"></span></div></div>
       </div>
     </section>
 
@@ -57,7 +58,7 @@
       <div class="topbar game-top"><div class="logo">17步</div><div class="stake">판돈 <b id="stakeSetup">-</b></div><div class="timer" id="setupTimer">03:00</div></div>
       <div class="setup-layout">
         <div class="setup-main panel">
-          <div class="section-head"><h2>내 34장 패산</h2><div>도라 <span id="setupDora" class="tile-mini"></span></div></div>
+          <div class="section-head"><h2>내 34장 패산</h2><div class="dora-inline"><span>도라표시</span><span id="setupDora" class="tile-mini"></span><span class="dora-arrow-small">→</span><span class="dora-hot-text">도라</span><span id="setupDoraTile" class="tile-mini"></span></div></div>
           <div id="privateWall" class="tile-grid"></div>
           <div class="selected-area">
             <div class="section-head"><h3>선택한 13장 <span id="selectedCount">0</span>/13</h3><span id="tenpaiStatus" class="status-chip neutral">판정 전</span></div>
@@ -70,7 +71,7 @@
           <h3>준비 규칙</h3>
           <p>34장 중 13장을 골라 손패를 만듭니다.</p>
           <p>3분 안에 확정하지 않으면 현재 선택을 보존하고 부족한 패는 자동 보충합니다. 상태는 노텐리치로 기록됩니다.</p>
-          <div class="dora-box"><span>도라표시패</span><span id="setupDoraBig"></span></div>
+          <div class="dora-box"><div><strong>도라표시패</strong><span id="setupDoraBig"></span></div><div class="dora-arrow">→</div><div><strong class="dora-hot-text">実際のドora</strong><span id="setupDoraBigTile"></span></div></div>
         </aside>
       </div>
     </section>
@@ -83,7 +84,7 @@
           <div id="opponentDiscards" class="discard-grid"></div>
         </div>
         <div class="center-area">
-          <div class="dora-center"><span>도라</span><span id="doraGame"></span></div>
+          <div class="dora-center"><div><span class="dora-label">도라표시패</span><span id="doraGame"></span></div><div class="dora-arrow">→</div><div><span class="dora-label dora-hot">실제 도라</span><span id="doraGameTile"></span></div></div>
           <div id="lastDiscard" class="last-discard hidden"></div>
           <div id="resultOverlay" class="result-overlay hidden"></div>
         </div>
@@ -99,7 +100,7 @@
     </section>
 
     <section id="result" class="screen">
-      <div class="result-card panel"><div id="resultTitle" class="eyebrow">GAME RESULT</div><h1 id="resultMain">-</h1><div id="resultDetail"></div><div id="yakuList" class="yaku-list"></div><div class="result-actions"><button id="nextRoundBtn" class="primary">다음 판</button></div></div>
+      <div class="result-card panel"><div id="resultTitle" class="eyebrow">GAME RESULT</div><div id="resultRank" class="result-rank result-rank-default"><span id="resultMain">-</span></div><div id="resultDetail"></div><div id="yakuList" class="yaku-list"></div><div class="result-actions"><button id="nextRoundBtn" class="primary">다음 판</button></div></div>
     </section>
 
     <div id="toast" class="toast"></div>

@@ -419,6 +419,7 @@ function publicRoom(room, forSocketId) {
     stake:room.stake,
     roundNumber:room.roundNumber,
     doraIndicator:room.doraIndicator,
+    doraTile:room.doraIndicator==null?null:doraFromIndicator(room.doraIndicator),
     setupEndsAt:room.setupEndsAt,
     turn:room.turn,
     lastDiscard:room.lastDiscard,
