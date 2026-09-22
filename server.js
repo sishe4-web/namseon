@@ -719,9 +719,14 @@ function lockSetup(room, seat, hand13, forced=false) {
   if(room.phase!=='SETUP' || p.setupConfirmed) return {ok:false,reason:p?.setupConfirmed?'이미 확정된 패입니다.':'조패 라운드가 아닙니다.'};
   const timedOut = p.setupTimedOut || (room.setupEndsAt && Date.now() > room.setupEndsAt);
   const counts=countsFromTiles(p.private34Tiles);
-  const selected=[]; const used=new Set();
-  for(const t of Array.isArray(hand13)?hand13:[]) {
-    if(t>=0&&t<34&&!used.has(t) && selected.filter(x=>x===t).length<counts[t]) { selected.push(t); used.add(`${t}:${selected.filter(x=>x===t).length}`); }
+  const selected=[];
+  const remaining=counts.slice();
+  for(const raw of Array.isArray(hand13)?hand13:[]) {
+    const t=Number(raw);
+    if(Number.isInteger(t) && t>=0 && t<34 && remaining[t]>0) {
+      selected.push(t);
+      remaining[t]--;
+    }
   }
   // Even after the 3-minute limit, the player still has to choose exactly 13 tiles.
   if(selected.length!==13) return {ok:false,reason:`정확히 13장을 선택해야 합니다. 현재 ${selected.length}장입니다.`};

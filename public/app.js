@@ -112,7 +112,7 @@ $('ronBtn').onclick=()=>socket.emit('declare_ron');
 $('passRonBtn').onclick=()=>socket.emit('pass_ron');
 $('nextRoundBtn').onclick=()=>socket.emit('next_round');
 $('restartGameBtn').onclick=()=>socket.emit('restart_game');
-$('cancelAllSetupBtn').onclick=()=>{ if(state?.me?.setupConfirmed)return toast('이미 확정된 패는 상대가 확정하기 전까지 위 버튼으로 잠금을 풀 수 있습니다.'); localSelected=[]; renderSelected(); renderAbilityPanel(state); socket.emit('preview_setup',{tiles:[]}); };
+$('cancelAllSetupBtn').onclick=()=>{ if(state?.me?.setupConfirmed)return toast('이미 확정된 패는 상대가 확정하기 전까지 위 버튼으로 잠금을 풀 수 있습니다.'); localSelected=[]; document.querySelectorAll('#privateWall .tile.selected').forEach(el=>el.classList.remove('selected')); renderSelected(); renderAbilityPanel(state); socket.emit('preview_setup',{tiles:[]}); };
 
 function renderLobby(s){
   $('roomCodeLobby').textContent=s.code; $('bigRoomCode').textContent=s.code;
@@ -253,7 +253,10 @@ function startSetup(s){
   const ch=s.me.character;
   const chReady=ch==='MURAOKA'||ch==='WASHIZU'||ch==null||(ch==='KAIJI'&&localKaijiTiles.length===2)||(ch==='AKAGI'&&!!s.me.akagiSuit);
   confirm.textContent=locked?(canUnlock?'확정 취소하고 다시 선택':'확정 완료'): '13장 확정';
-  confirm.disabled=locked ? !canUnlock : (localSelected.length!==13 || !chReady);
+  // 13장을 고르면 버튼은 항상 클릭 가능하게 한다. 캐릭터 특수능력 조건은
+  // 클릭 핸들러와 서버에서 구체적인 이유를 안내한다. disabled 때문에
+  // '13장을 다 골랐는데 아무 반응도 없는' 상태가 생기지 않게 한다.
+  confirm.disabled=locked ? !canUnlock : (localSelected.length!==13);
   $('cancelAllSetupBtn').disabled=locked; show('setup');
   const oppInfo=$('opponentCharacterInfo');
   if(oppInfo){
