@@ -152,7 +152,16 @@
 
     <div id="toast" class="toast"></div>
   </main>
+
+  <aside id="chatWidget" class="chat-widget hidden" aria-label="채팅">
+    <div class="chat-head"><strong>채팅</strong><span id="chatCount">0</span></div>
+    <div id="chatMessages" class="chat-messages"></div>
+    <form id="chatForm" class="chat-form" autocomplete="off">
+      <input id="chatInput" maxlength="200" placeholder="메시지를 입력하세요" />
+      <button type="submit">전송</button>
+    </form>
+  </aside>
   <script src="/socket.io/socket.io.js"></script>
-  <script src="/app.js?v=20260923-character-mode"></script>
+  <script src="/app.js?v=20260923-chat-restart-fixed"></script>
 </body>
 </html>

@@ -1162,14 +1162,83 @@ io.on('connection', socket=>{
   socket.on('restart_game',()=>{
     const room=rooms.get(socket.data.roomCode); if(!room)return;
     const seat=playerSeat(room,socket.id); if(!seat)return;
-    room.phase='WAITING'; room.roundNumber=1; room.stake=room.startingStake||1000000; room.finalRound=false; room.uraDoraIndicator=null; room.doraIndicator=null;
-    room.charactersLocked=false; room.nextReady={EAST:false,WEST:false}; room.setupUnlock={EAST:false,WEST:false}; room.startReady={EAST:false,WEST:false}; room.showdownEndsAt=null; room.startReady={EAST:false,WEST:false}; room.showdownEndsAt=null;
+    if(!((room.phase==='RESULT'||room.phase==='DRAW') && room.result?.gameOver)) return socket.emit('error_message','대국 종료 상태에서만 처음부터 다시 시작할 수 있습니다.');
+
+    // Do NOT reload either browser here. A reload disconnects the socket, and
+    // the disconnect handler would remove that player from the room. Reset the
+    // existing room in-place so both players stay in the same room and both
+    // clients receive WAITING at the same time.
+    room.phase='WAITING';
+    room.roundNumber=1;
+    room.dealer='EAST';
+    room.stake=room.startingStake||1000000;
+    room.finalRound=false;
+    room.result=null;
+    room.resultEndsAt=null;
+    room.uraDoraIndicator=null;
+    room.doraIndicator=null;
+    room.doraPool=[];
+    room.doraSelectionIndex=null;
+    room.setupEndsAt=null;
+    room.turn=null;
+    room.lastDiscard=null;
+    room.lastDiscardBy=null;
+    room.winner=null;
+    room.doraRevealEndsAt=null;
+    room.showdownEndsAt=null;
+    room.turnEndsAt=null;
+    room.ronRevealEndsAt=null;
+    room.ronBlockEndsAt=null;
+    room.pendingRon=null;
+    room.nextReady={EAST:false,WEST:false};
+    room.setupUnlock={EAST:false,WEST:false};
+    room.startReady={EAST:false,WEST:false};
+    room.charactersLocked=false;
+    room.characterPickerSeat=null;
+    room.orderDrawSelections={EAST:null,WEST:null};
+    room.orderDrawRevealed=null;
+    room.orderDrawEndsAt=null;
+    room.orderDrawTiles=[];
+
     for(const p of [room.players.EAST,room.players.WEST]) if(p){
-      p.money=room.startingMoney; p.character=null; p.specialRonTiles=[]; p.akagiSuit=null; p.abilityReady=false; p.kaijiAbilityEligible=false; p.kaijiAbilityConfirmed=false; p.murauokaReveal=[];
-      p.setupConfirmed=false; p.hand13=[]; p.discardCandidates=[]; p.discardedTiles=[]; p.discardCount=0; p.waits=[]; p.furiten=false; p.temporaryFuriten=false;
+      p.money=room.startingMoney;
+      p.character=null;
+      p.specialRonTiles=[];
+      p.akagiSuit=null;
+      p.abilityReady=false;
+      p.kaijiAbilityEligible=false;
+      p.kaijiAbilityConfirmed=false;
+      p.murauokaReveal=[];
+      p.private34Tiles=[];
+      p.hand13=[];
+      p.discardCandidates=[];
+      p.discardedTiles=[];
+      p.discardCount=0;
+      p.waits=[];
+      p.furiten=false;
+      p.temporaryFuriten=false;
+      p.setupConfirmed=false;
+      p.isTenpai=false;
+      p.isRiichi=false;
+      p.ippatsu=false;
+      p.riichiDiscardIndex=null;
+      p.setupTimedOut=false;
+      p.turnEndsAt=null;
     }
-    socket.emit('restart_done');
+
     emitRoom(room);
+  });
+
+  socket.on('send_chat',({text})=>{
+    const room=rooms.get(socket.data.roomCode); if(!room)return;
+    const seat=playerSeat(room,socket.id); if(!seat)return;
+    const p=room.players[seat]; if(!p)return;
+    const now=Date.now();
+    if(p.chatLastAt && now-p.chatLastAt<350) return socket.emit('error_message','채팅을 너무 빠르게 보낼 수 없습니다.');
+    const message=String(text??'').replace(/[\u0000-\u001F\u007F]/g,'').trim().slice(0,200);
+    if(!message)return;
+    p.chatLastAt=now;
+    io.to(room.code).emit('chat_message',{seat,nickname:p.nickname,text:message,at:now});
   });
 
   socket.on('disconnect',()=>{

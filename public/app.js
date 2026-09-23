@@ -90,6 +90,27 @@ function setTileContent(container,t,cls=''){
 }
 function toast(msg){const x=$('toast'); x.textContent=msg; x.classList.add('show'); setTimeout(()=>x.classList.remove('show'),2200)}
 
+let chatMessageCount=0;
+function showChat(){ $('chatWidget')?.classList.remove('hidden'); }
+function appendChatMessage(msg){
+  const box=$('chatMessages'); if(!box)return;
+  const row=document.createElement('div');
+  row.className=`chat-message ${msg.seat===state?.me?.seat?'mine':'other'}`;
+  const meta=document.createElement('div'); meta.className='chat-meta'; meta.textContent=msg.seat===state?.me?.seat?'나':(msg.nickname||'상대');
+  const bubble=document.createElement('div'); bubble.className='chat-bubble'; bubble.textContent=msg.text||'';
+  row.append(meta,bubble); box.appendChild(row);
+  chatMessageCount++; $('chatCount').textContent=chatMessageCount;
+  box.scrollTop=box.scrollHeight;
+  while(box.children.length>100) box.removeChild(box.firstChild);
+}
+$('chatForm')?.addEventListener('submit',e=>{
+  e.preventDefault();
+  const input=$('chatInput'); const text=input?.value.trim();
+  if(!text)return;
+  socket.emit('send_chat',{text});
+  input.value=''; input.focus();
+});
+
 $('createBtn').onclick=()=>{const mode=document.querySelector('input[name=gameMode]:checked')?.value||'ORIGINAL';socket.emit('create_room',{nickname:$('nickname').value.trim()||'Player 1',stake:Number($('stake').value)||1000000,gameMode:mode})};
 document.querySelectorAll('input[name=gameMode]').forEach(r=>r.addEventListener('change',()=>document.querySelectorAll('.mode-card').forEach(c=>c.classList.toggle('selected',c.querySelector('input')?.checked))));
 $('joinBtn').onclick=()=>socket.emit('join_room',{nickname:$('nickname').value.trim()||'Player 2',code:$('joinCode').value.trim()});
@@ -544,7 +565,6 @@ function renderResult(s){
 }
 
 const startGameBtn=$('startGameBtn'); if(startGameBtn) startGameBtn.onclick=()=>socket.emit('start_ready');
-socket.on('restart_done',()=>location.reload());
 socket.on('room_created',({code})=>{show('lobby');$('roomCodeLobby').textContent=code;$('bigRoomCode').textContent=code});
 socket.on('joined_room',({code})=>toast(`${code} 방에 참가했습니다.`));
 socket.on('notice',msg=>toast(msg));
@@ -553,9 +573,11 @@ socket.on('dora_reveal',({dora,endsAt})=>{ clearInterval(doraRevealHandle); show
 socket.on('dora_selected',({dora})=>{ $('doraWait').classList.remove('hidden'); $('doraWait').innerHTML=''; $('doraWait').append('도라표시패: '); $('doraWait').appendChild(renderTile(dora,'tile-mini')); });
 socket.on('ron_reveal',({winner,loser,tile,endsAt})=>{ clearInterval(ronRevealHandle); const box=$('ronAlert'); box.classList.remove('hidden'); box.classList.add('flash'); box.innerHTML=`<b>${winner===state?.me?.seat?'RON!':'RON 당함!'}</b><span>${tileLabel(tile)} · 화료 연출 중</span>`; const tick=()=>{if(Date.now()>=endsAt){clearInterval(ronRevealHandle);return;} };tick();ronRevealHandle=setInterval(tick,100); });
 socket.on('setup_preview',data=>{setupPreview=data?.waits||[];renderSetupPreview();});
+socket.on('chat_message',msg=>appendChatMessage(msg));
 socket.on('state',s=>{
   const previousPhase=lastPhase;
   state=s;
+  if(s?.code) showChat();
   if(s.phase==='WAITING'){renderLobby(s);show('lobby');}
   else if(s.phase==='SHOWDOWN') renderShowdown(s);
   else if(s.phase==='CHARACTER_ORDER_DRAW'||s.phase==='CHARACTER_ORDER_REVEAL') renderCharacterOrder(s);
