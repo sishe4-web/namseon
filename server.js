@@ -874,11 +874,12 @@ function updateFuriten(player) {
   player.furiten = wins.some(t=>own.has(t));
 }
 
-function discard(room, seat, tile) {
+function discard(room, seat, tile, options={}) {
+  const bypassTimeout=!!options.bypassTimeout;
   if(room.phase!=='PLAYING' || room.turn!==seat) return {ok:false,reason:'턴이 아닙니다.'};
   if(room.ronRevealEndsAt && Date.now()<room.ronRevealEndsAt) return {ok:false,reason:'론 확인 연출 중입니다. 잠시 기다려주세요.'};
   if(room.ronBlockEndsAt && Date.now()<room.ronBlockEndsAt) return {ok:false,reason:'론 확인 시간입니다. 잠시 기다려주세요.'};
-  if(room.turnEndsAt && Date.now()>room.turnEndsAt) return {ok:false,reason:'타임아웃으로 자동 타패됩니다.'};
+  if(!bypassTimeout && room.turnEndsAt && Date.now()>room.turnEndsAt) return {ok:false,reason:'타임아웃으로 자동 타패됩니다.'};
   const p=room.players[seat];
   const check=canDiscardTile(room,seat,tile);
   if(!check.ok)return check;
@@ -1267,7 +1268,10 @@ setInterval(()=>{
     if(room.phase==='PLAYING' && room.ronBlockEndsAt && now>=room.ronBlockEndsAt){ room.ronBlockEndsAt=null; emitRoom(room); }
     if(room.phase==='PLAYING' && room.turnEndsAt && now>=room.turnEndsAt){
       const p=room.players[room.turn];
-      if(p && p.discardCandidates.length){ const tile=p.discardCandidates[Math.floor(Math.random()*p.discardCandidates.length)]; discard(room,room.turn,tile); doDraw(room); }
+      if(p && p.discardCandidates.length){ const tile=p.discardCandidates[Math.floor(Math.random()*p.discardCandidates.length)];
+      const forced=discard(room,room.turn,tile,{bypassTimeout:true});
+      if(forced.ok) doDraw(room);
+      else { room.turnEndsAt=Date.now()+TURN_MS; emitRoom(room); } }
       continue;
     }
     if((room.phase==='RESULT'||room.phase==='DRAW') && room.result?.gameOver!==true && room.resultEndsAt && now>=room.resultEndsAt){

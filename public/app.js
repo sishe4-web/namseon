@@ -111,6 +111,53 @@ $('chatForm')?.addEventListener('submit',e=>{
   input.value=''; input.focus();
 });
 
+// 채팅창 위치는 헤더를 드래그해서 자유롭게 이동할 수 있다.
+(function initChatDrag(){
+  const widget=$('chatWidget'), handle=$('chatDragHandle');
+  if(!widget || !handle) return;
+  const KEY='17bo-chat-position-v1';
+  let dragging=false, offsetX=0, offsetY=0;
+  try{
+    const saved=JSON.parse(localStorage.getItem(KEY)||'null');
+    if(saved && Number.isFinite(saved.left) && Number.isFinite(saved.top)){
+      widget.style.left=saved.left+'px'; widget.style.top=saved.top+'px';
+      widget.style.right='auto'; widget.style.bottom='auto';
+    }
+  }catch{}
+  const clamp=()=>{
+    const rect=widget.getBoundingClientRect();
+    const maxX=Math.max(0,window.innerWidth-rect.width);
+    const maxY=Math.max(0,window.innerHeight-rect.height);
+    const left=Math.min(Math.max(0,parseFloat(widget.style.left)||0),maxX);
+    const top=Math.min(Math.max(0,parseFloat(widget.style.top)||0),maxY);
+    widget.style.left=left+'px'; widget.style.top=top+'px';
+    widget.style.right='auto'; widget.style.bottom='auto';
+  };
+  const move=e=>{
+    if(!dragging)return;
+    const x=e.clientX-offsetX, y=e.clientY-offsetY;
+    const rect=widget.getBoundingClientRect();
+    widget.style.left=Math.min(Math.max(0,x),Math.max(0,innerWidth-rect.width))+'px';
+    widget.style.top=Math.min(Math.max(0,y),Math.max(0,innerHeight-rect.height))+'px';
+  };
+  const end=()=>{
+    if(!dragging)return;
+    dragging=false; document.body.classList.remove('chat-dragging');
+    try{localStorage.setItem(KEY,JSON.stringify({left:parseFloat(widget.style.left)||0,top:parseFloat(widget.style.top)||0}));}catch{}
+  };
+  handle.addEventListener('pointerdown',e=>{
+    if(e.button!==0)return;
+    const rect=widget.getBoundingClientRect();
+    offsetX=e.clientX-rect.left; offsetY=e.clientY-rect.top;
+    widget.style.left=rect.left+'px'; widget.style.top=rect.top+'px'; widget.style.right='auto'; widget.style.bottom='auto';
+    dragging=true; document.body.classList.add('chat-dragging'); handle.setPointerCapture?.(e.pointerId); e.preventDefault();
+  });
+  handle.addEventListener('pointermove',move);
+  handle.addEventListener('pointerup',end);
+  handle.addEventListener('pointercancel',end);
+  window.addEventListener('resize',clamp);
+})();
+
 $('createBtn').onclick=()=>{const mode=document.querySelector('input[name=gameMode]:checked')?.value||'ORIGINAL';socket.emit('create_room',{nickname:$('nickname').value.trim()||'Player 1',stake:Number($('stake').value)||1000000,gameMode:mode})};
 document.querySelectorAll('input[name=gameMode]').forEach(r=>r.addEventListener('change',()=>document.querySelectorAll('.mode-card').forEach(c=>c.classList.toggle('selected',c.querySelector('input')?.checked))));
 $('joinBtn').onclick=()=>socket.emit('join_room',{nickname:$('nickname').value.trim()||'Player 2',code:$('joinCode').value.trim()});

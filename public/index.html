@@ -154,7 +154,7 @@
   </main>
 
   <aside id="chatWidget" class="chat-widget hidden" aria-label="채팅">
-    <div class="chat-head"><strong>채팅</strong><span id="chatCount">0</span></div>
+    <div class="chat-head" id="chatDragHandle" title="드래그해서 채팅 위치 이동"><strong>채팅</strong><span id="chatCount">0</span></div>
     <div id="chatMessages" class="chat-messages"></div>
     <form id="chatForm" class="chat-form" autocomplete="off">
       <input id="chatInput" maxlength="200" placeholder="메시지를 입력하세요" />
@@ -162,6 +162,6 @@
     </form>
   </aside>
   <script src="/socket.io/socket.io.js"></script>
-  <script src="/app.js?v=20260923-chat-restart-fixed"></script>
+  <script src="/app.js?v=20260923-chat-restart-timer-drag-fixed"></script>
 </body>
 </html>
