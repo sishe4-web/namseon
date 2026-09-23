@@ -248,8 +248,10 @@ function renderAbilityPanel(s){
     const manganEligible=localSelected.length===13 && setupPreview.some(x=>x.allowed);
     const eligible=localSelected.length===13 ? manganEligible : !!s.me.abilityEligible;
     const ready=eligible && localKaijiTiles.length===2 && localKaijiTiles.every(t=>!waits.has(t));
+    const confirmed=!!s.me.kaijiAbilityConfirmed;
     const reason=eligible?'만관 이상 텐파이 · 특수능력 사용 가능':'노텐 또는 만관 이상 텐파이 아님 · 특수능력 사용 불가';
-    box.innerHTML=`<div class="ability-title">${s.me.characterName} · 특수 론</div><p>만관 이상 텐파이일 때만 사용할 수 있습니다. 대기패가 아닌 패 2장을 골라 특수 론패로 지정합니다.</p><div class="ability-selected"><span>선택: ${localKaijiTiles.map(tileLabel).join(' · ')||'없음'}</span><b>${eligible?(ready?'준비 완료':'2장 선택 필요'):reason}</b></div><div class="ability-tile-picker"></div>`;
+    const status=eligible?(ready?(confirmed?'특수 론패 확정 완료':'2장 선택 완료 · 확정 중'): '2장 선택 필요'):reason;
+    box.innerHTML=`<div class="ability-title">${s.me.characterName} · 특수 론</div><p>13장 확정 후에도 이 설정을 계속할 수 있습니다. 상대가 먼저 13장을 확정해도 <b>특수 론패 2장까지 확정하기 전에는 게임이 시작되지 않습니다.</b></p><div class="ability-selected"><span>선택: ${localKaijiTiles.map(tileLabel).join(' · ')||'없음'}</span><b>${status}</b></div><div class="ability-tile-picker"></div>`;
     const picker=box.querySelector('.ability-tile-picker');
     for(let t=0;t<34;t++){
       const el=renderTile(t,'tile ability-tile'+(localKaijiTiles.includes(t)?' selected':'')+(waits.has(t)||!eligible?' disabled':''));

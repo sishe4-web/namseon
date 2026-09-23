@@ -557,6 +557,7 @@ function publicRoom(room, forSocketId) {
       discardedTiles:me.discardedTiles.slice(),
       discardCount:me.discardCount,
       setupConfirmed:me.setupConfirmed,
+      kaijiAbilityConfirmed:!!me.kaijiAbilityConfirmed,
       isTenpai:me.isTenpai,
       isRiichi:me.isRiichi,
       ippatsu:me.ippatsu,
@@ -626,7 +627,7 @@ function initialPlayer(id, nickname, seat) {
   return {
     id,nickname,seat,private34Tiles:[],hand13:[],discardCandidates:[],discardedTiles:[],
     setupConfirmed:false,isTenpai:false,isRiichi:false,ippatsu:false,discardCount:0,riichiDiscardIndex:null,waits:[],furiten:false,money:0,temporaryFuriten:false,setupTimedOut:false,
-    character:null,specialRonTiles:[],akagiSuit:null,abilityReady:false,kaijiAbilityEligible:false,murauokaReveal:[],turnEndsAt:null
+    character:null,specialRonTiles:[],akagiSuit:null,abilityReady:false,kaijiAbilityEligible:false,kaijiAbilityConfirmed:false,murauokaReveal:[],turnEndsAt:null
   };
 }
 
@@ -651,7 +652,7 @@ function startRound(room) {
   room.players.EAST.specialRonTiles=[]; room.players.WEST.specialRonTiles=[];
   room.players.EAST.akagiSuit=null; room.players.WEST.akagiSuit=null;
   room.players.EAST.abilityReady=false; room.players.WEST.abilityReady=false;
-  room.players.EAST.kaijiAbilityEligible=false; room.players.WEST.kaijiAbilityEligible=false;
+  room.players.EAST.kaijiAbilityEligible=false; room.players.WEST.kaijiAbilityEligible=false; room.players.EAST.kaijiAbilityConfirmed=false; room.players.WEST.kaijiAbilityConfirmed=false;
   room.players.EAST.murauokaReveal=[]; room.players.WEST.murauokaReveal=[];
   room.orderDrawTiles=shuffle(Array.from({length:9},(_,i)=>i));
   room.orderDrawSelections={EAST:null,WEST:null};
@@ -721,7 +722,7 @@ function finishCharacterSelection(room, seat, character) {
     room.characterPickerSeat=null;
     room.phase='DORA_REVEAL';
     room.players.EAST.abilityReady=false; room.players.WEST.abilityReady=false;
-  room.players.EAST.kaijiAbilityEligible=false; room.players.WEST.kaijiAbilityEligible=false;
+  room.players.EAST.kaijiAbilityEligible=false; room.players.WEST.kaijiAbilityEligible=false; room.players.EAST.kaijiAbilityConfirmed=false; room.players.WEST.kaijiAbilityConfirmed=false;
     beginDoraReveal(room);
   } else {
     room.characterPickerSeat=otherSeat(seat);
@@ -785,10 +786,17 @@ function lockSetup(room, seat, hand13, forced=false) {
       p.specialRonTiles=[...new Set((p.specialRonTiles||[]).map(Number))]
         .filter(t=>Number.isInteger(t)&&t>=0&&t<34&&!waits.has(t))
         .slice(0,2);
+      // A qualifying Kaiji must finish the separate special-Ron selection
+      // after confirming the 13-tile hand. Do not start the hand yet.
+      p.kaijiAbilityConfirmed=p.specialRonTiles.length===2;
     } else {
-      // Noten or no mangan-or-higher wait: Kaiji's special ability is unavailable.
+      // Noten or no mangan-or-higher wait: Kaiji's special ability is unavailable,
+      // so there is no second confirmation step to wait for.
       p.specialRonTiles=[];
+      p.kaijiAbilityConfirmed=true;
     }
+  } else {
+    p.kaijiAbilityConfirmed=true;
   }
   if(!forced && room.gameMode==='CHARACTER' && p.character==='AKAGI' && !['m','p','s'].includes(p.akagiSuit)) {
     io.to(p.id).emit('error_message','아카기의 절일문 수패(만수·통수·삭수)를 먼저 선택해야 합니다.'); return;
@@ -807,8 +815,7 @@ function lockSetup(room, seat, hand13, forced=false) {
   p.isRiichi=true;
   p.ippatsu=true;
   if(!p.waits.length) p.isTenpai=false;
-  if(room.players.EAST.setupConfirmed && room.players.WEST.setupConfirmed) beginPlay(room);
-  else emitRoom(room);
+  tryBeginPlay(room);
 }
 
 function unlockSetup(room, seat) {
@@ -818,7 +825,7 @@ function unlockSetup(room, seat) {
   if(!p?.setupConfirmed) return {ok:false,reason:'아직 패를 확정하지 않았습니다.'};
   if(opp?.setupConfirmed) return {ok:false,reason:'상대도 이미 패를 확정했습니다.'};
   p.setupConfirmed=false;
-  p.isRiichi=false; p.ippatsu=false; p.abilityReady=false; p.kaijiAbilityEligible=false;
+  p.isRiichi=false; p.ippatsu=false; p.abilityReady=false; p.kaijiAbilityEligible=false; p.kaijiAbilityConfirmed=false;
   room.setupUnlock[seat]=true;
   emitRoom(room);
   return {ok:true};
@@ -836,6 +843,20 @@ function forceRandomSetup(room, seat) {
   if(p.character==='AKAGI' && !p.akagiSuit) p.akagiSuit=shuffle(['m','p','s'])[0];
   p.abilityReady=true;
   lockSetup(room,seat,selected,true);
+}
+
+function tryBeginPlay(room) {
+  if(room.phase!=='SETUP') return;
+  if(!room.players.EAST.setupConfirmed || !room.players.WEST.setupConfirmed) {
+    emitRoom(room); return;
+  }
+  for(const seat of ['EAST','WEST']) {
+    const p=room.players[seat];
+    if(room.gameMode==='CHARACTER' && p.character==='KAIJI' && p.kaijiAbilityEligible && !p.kaijiAbilityConfirmed) {
+      emitRoom(room); return;
+    }
+  }
+  beginPlay(room);
 }
 
 function beginPlay(room) {
@@ -1043,19 +1064,23 @@ io.on('connection', socket=>{
   socket.on('set_kaiji_tiles',({tiles})=>{
     const room=rooms.get(socket.data.roomCode); if(!room)return;
     const seat=playerSeat(room,socket.id); if(!seat || room.phase!=='SETUP')return;
-    const p=room.players[seat]; if(p.character!=='KAIJI' || p.setupConfirmed)return;
+    const p=room.players[seat]; if(p.character!=='KAIJI')return;
+    // Kaiji's 13-tile hand can already be confirmed here. The special-Ron
+    // selection is a separate step, so never block it on setupConfirmed.
     const clean=[...new Set((Array.isArray(tiles)?tiles:[]).map(Number).filter(t=>Number.isInteger(t)&&t>=0&&t<34))];
     // Allow 0~2 while toggling. If the already-confirmed 13-tile hand is
     // known to be ineligible, the ability cannot be selected at all.
     if(p.hand13?.length===13 && !kaijiAbilityEligible(room,seat,p.hand13)) {
-      p.kaijiAbilityEligible=false; p.specialRonTiles=[];
-      return emitRoom(room);
+      p.kaijiAbilityEligible=false; p.specialRonTiles=[]; p.kaijiAbilityConfirmed=true;
+      return tryBeginPlay(room);
     }
-    const waits=new Set(p.hand13?.length===13 ? getWaits(p.hand13) : []);
+    if(p.hand13?.length!==13) return socket.emit('error_message','먼저 13장을 확정하세요.');
+    const waits=new Set(getWaits(p.hand13));
     const invalid=clean.filter(t=>waits.has(t));
     if(invalid.length) return socket.emit('error_message','현재 대기패는 특수 론패로 선택할 수 없습니다.');
     p.specialRonTiles=clean.slice(0,2);
-    emitRoom(room);
+    p.kaijiAbilityConfirmed=p.specialRonTiles.length===2;
+    tryBeginPlay(room);
   });
 
   socket.on('set_akagi_suit',({suit})=>{
@@ -1140,7 +1165,7 @@ io.on('connection', socket=>{
     room.phase='WAITING'; room.roundNumber=1; room.stake=room.startingStake||1000000; room.finalRound=false; room.uraDoraIndicator=null; room.doraIndicator=null;
     room.charactersLocked=false; room.nextReady={EAST:false,WEST:false}; room.setupUnlock={EAST:false,WEST:false}; room.startReady={EAST:false,WEST:false}; room.showdownEndsAt=null; room.startReady={EAST:false,WEST:false}; room.showdownEndsAt=null;
     for(const p of [room.players.EAST,room.players.WEST]) if(p){
-      p.money=room.startingMoney; p.character=null; p.specialRonTiles=[]; p.akagiSuit=null; p.abilityReady=false; p.kaijiAbilityEligible=false; p.murauokaReveal=[];
+      p.money=room.startingMoney; p.character=null; p.specialRonTiles=[]; p.akagiSuit=null; p.abilityReady=false; p.kaijiAbilityEligible=false; p.kaijiAbilityConfirmed=false; p.murauokaReveal=[];
       p.setupConfirmed=false; p.hand13=[]; p.discardCandidates=[]; p.discardedTiles=[]; p.discardCount=0; p.waits=[]; p.furiten=false; p.temporaryFuriten=false;
     }
     socket.emit('restart_done');
